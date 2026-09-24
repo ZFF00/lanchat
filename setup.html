@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>局域网传输</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.6 system-ui, "Microsoft YaHei", sans-serif; background: #f2f3f5; color: #1f2329;
+         display: flex; align-items: center; justify-content: center; min-height: 100vh; }
+  main { width: 420px; display: flex; flex-direction: column; gap: 14px; }
+  h1 { font-size: 20px; margin: 0 0 4px; text-align: center; }
+  .card { background: #fff; border-radius: 10px; padding: 18px; box-shadow: 0 2px 12px rgba(0,0,0,.06); }
+  .card b { font-size: 16px; }
+  .hint { font-size: 13px; color: #86909c; margin: 4px 0 12px; }
+  button { height: 36px; padding: 0 16px; border-radius: 6px; border: 1px solid #3370ff; background: #3370ff;
+           color: #fff; font: inherit; cursor: pointer; }
+  button.ghost { background: #fff; color: #3370ff; }
+  button:disabled { opacity: .5; cursor: default; }
+  .line { display: flex; gap: 8px; margin-top: 10px; }
+  input { flex: 1; height: 36px; border: 1px solid #e5e6eb; border-radius: 6px; padding: 0 10px; font: inherit; outline: none; }
+  input:focus { border-color: #3370ff; }
+  #found button { margin: 8px 8px 0 0; }
+  #msg { font-size: 13px; color: #f54a45; text-align: center; min-height: 20px; }
+</style>
+</head>
+<body>
+<main>
+  <h1>局域网传输</h1>
+  <div class="card">
+    <b>这台当主机</b>
+    <div class="hint">聊天记录和文件存在这台电脑上。用的时候保持它开着。</div>
+    <button id="host">作为主机启动</button>
+  </div>
+  <div class="card">
+    <b>连接另一台</b>
+    <div class="hint">另一台已经作为主机启动了。先自动搜索，搜不到就手动输入主机窗口顶部显示的地址。</div>
+    <button class="ghost" id="find">自动搜索</button>
+    <div id="found"></div>
+    <div class="line">
+      <input id="addr" placeholder="例如 192.168.3.136:8765">
+      <button id="join">连接</button>
+    </div>
+  </div>
+  <div id="msg"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const say = t => { $('msg').textContent = t; };
+
+function busy(btn, text, job) {
+  return async (...args) => {
+    const old = btn.textContent;
+    btn.disabled = true; btn.textContent = text; say('');
+    try { const err = await job(...args); if (err) say(err); }
+    finally { btn.disabled = false; btn.textContent = old; }
+  };
+}
+
+window.addEventListener('pywebviewready', async () => {
+  const init = await pywebview.api.init();
+  if (init.last) $('addr').value = init.last;
+  if (init.error) say(init.error);
+
+  $('host').onclick = busy($('host'), '启动中…', () => pywebview.api.host());
+  const join = busy($('join'), '连接中…', addr => pywebview.api.join(addr ?? $('addr').value));
+  $('join').onclick = () => join();
+  $('addr').onkeydown = e => { if (e.key === 'Enter') join(); };
+  $('find').onclick = busy($('find'), '搜索中…', async () => {
+    const hosts = await pywebview.api.find();
+    $('found').replaceChildren(...hosts.map(h => {
+      const b = document.createElement('button');
+      b.className = 'ghost'; b.textContent = `连接 ${h}`;
+      b.onclick = () => { $('addr').value = h; join(h); };
+      return b;
+    }));
+    if (!hosts.length) return '没搜到，可能两台不在同一网段，请手动输入地址';
+  });
+});
+</script>
+</body>
+</html>
