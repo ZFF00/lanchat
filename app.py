@@ -2,20 +2,23 @@
 
 主机端在后台跑 lanchat 服务并打开本机聊天页；连接端直接打开主机的聊天页。
 """
+import ctypes
 import json
 import os
 import shutil
 import socket
+import subprocess
 import time
 import urllib.parse
 import urllib.request
+from ctypes import wintypes
 from pathlib import Path
 
 import webview
 
 import lanchat
 
-VERSION = "1.0.2"
+VERSION = "1.0.3"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -39,6 +42,32 @@ def save_conf(**kw):
     conf.update(kw)
     CONF.write_text(json.dumps(conf, ensure_ascii=False), encoding="utf-8")
 
+
+def copy_to_clipboard(text):
+    """局域网 http 页面拿不到剪贴板权限，由 Python 直接调 Win32 剪贴板 API 写入 Unicode 文本。"""
+    k32, u32 = ctypes.windll.kernel32, ctypes.windll.user32
+    k32.GlobalAlloc.argtypes, k32.GlobalAlloc.restype = [wintypes.UINT, ctypes.c_size_t], wintypes.HGLOBAL
+    k32.GlobalLock.argtypes, k32.GlobalLock.restype = [wintypes.HGLOBAL], ctypes.c_void_p
+    k32.GlobalUnlock.argtypes = k32.GlobalFree.argtypes = [wintypes.HGLOBAL]
+    u32.OpenClipboard.argtypes = [wintypes.HWND]
+    u32.SetClipboardData.argtypes, u32.SetClipboardData.restype = [wintypes.UINT, wintypes.HANDLE], wintypes.HANDLE
+    data = (text + "\0").encode("utf-16-le")
+    for _ in range(20):  # 剪贴板可能正被别的程序占用，稍等重试
+        if u32.OpenClipboard(None):
+            break
+        time.sleep(0.05)
+    else:
+        raise OSError("剪贴板被其他程序占用")
+    try:
+        u32.EmptyClipboard()
+        h = k32.GlobalAlloc(0x0002, len(data))  # GMEM_MOVEABLE
+        ctypes.memmove(k32.GlobalLock(h), data, len(data))
+        k32.GlobalUnlock(h)
+        if not u32.SetClipboardData(13, h):  # CF_UNICODETEXT；成功后内存归系统所有
+            k32.GlobalFree(h)
+            raise OSError("写入剪贴板失败")
+    finally:
+        u32.CloseClipboard()
 
 def normalize(addr):
     addr = addr.strip().removeprefix("http://").rstrip("/")
@@ -122,18 +151,43 @@ class Api:
         window.load_url(f"http://{addr}/")
 
     def open_file(self, mid, name):
-        """用系统默认程序打开第 mid 条消息里的文件，成功返回空串，否则返回提示。"""
-        mid = int(mid)
-        if Path(name).suffix.lower() in RISKY:
-            return "这是可执行文件，为安全起见不直接打开，请点“下载”后自行确认再运行"
+        """兼容 v1.0.2 页面：等同 file_action(..., "open")，返回提示文本。"""
+        return self.file_action(mid, name, "open")["error"]
+
+    def file_action(self, mid, name, action):
+        """对第 mid 条消息里的文件执行操作，返回 {"error": 提示, "info": 成功提示}。
+
+        action: open 打开 / folder 打开所在目录 / saveas 另存为 / path 复制路径 / dir 复制目录路径
+        连接端先把文件下载到本机 received\\，之后的路径、目录都指向这份本机副本。
+        """
+        if action == "open" and Path(name).suffix.lower() in RISKY:
+            return {"error": "这是可执行文件，为安全起见不直接打开，请用“所在目录”找到它，确认安全后再运行", "info": ""}
+        try:
+            path = self._local_path(int(mid), name)
+            if action == "open":
+                os.startfile(path)
+            elif action == "folder":
+                subprocess.Popen(f'explorer /select,"{path}"')
+            elif action == "saveas":
+                picked = window.create_file_dialog(webview.FileDialog.SAVE, save_filename=name)
+                if not picked:
+                    return {"error": "", "info": ""}
+                dest = picked if isinstance(picked, str) else picked[0]
+                shutil.copyfile(path, dest)
+                return {"error": "", "info": f"已保存到 {dest}"}
+            elif action in ("path", "dir"):
+                copy_to_clipboard(str(path if action == "path" else path.parent))
+                return {"error": "", "info": "已复制"}
+            else:
+                return {"error": f"未知操作 {action}", "info": ""}
+        except OSError as e:
+            return {"error": f"操作失败：{e}", "info": ""}
+        return {"error": "", "info": ""}
+
+    def _local_path(self, mid, name):
+        """文件在本机的位置：主机直接用收件目录里的原文件，连接端下载一份。"""
         path = lanchat.stored_path(mid) if self._server else None
-        if path is None:
-            try:
-                path = self._fetch(mid, name)
-            except OSError as e:
-                return f"打开失败：{e}"
-        os.startfile(path)
-        return ""
+        return path or self._fetch(mid, name)
 
     def _fetch(self, mid, name):
         """从当前连接的主机下载文件到 received\\，已下载过的直接复用。"""

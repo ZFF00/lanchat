@@ -30,9 +30,14 @@
   .openable:hover .file .name { color: #3370ff; text-decoration: underline; }
   .file .icon { font-size: 26px; }
   .file .size { font-size: 12px; color: #86909c; }
-  .actions { margin-top: 3px; }
+  .actions { margin-top: 3px; display: flex; gap: 10px; flex-wrap: wrap; }
   .actions a, .actions button { color: #3370ff; background: none; border: 0; padding: 0; cursor: pointer;
                                 font-size: 12px; text-decoration: none; }
+  body:not(.app) .app-only { display: none; }  /* 这些操作要本机 app 支持，浏览器里隐藏 */
+  #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: rgba(31,35,41,.88);
+           color: #fff; padding: 6px 14px; border-radius: 6px; font-size: 13px; max-width: 80%; word-break: break-all;
+           opacity: 0; transition: opacity .2s; pointer-events: none; }
+  #toast.show { opacity: 1; }
   footer { background: #fff; border-top: 1px solid #e5e6eb; padding: 10px 12px; display: flex; gap: 8px;
            align-items: flex-end; }
   #input { flex: 1; resize: none; border: 1px solid #e5e6eb; border-radius: 6px; padding: 8px 10px;
@@ -64,6 +69,7 @@
   <input type="file" id="file" multiple hidden>
 </footer>
 <div id="drop">松开即发送</div>
+<div id="toast"></div>
 <div id="login">
   <form id="loginForm">
     <b>输入访问码</b>
@@ -139,6 +145,11 @@ function render(m) {
     bubble.classList.add('openable');
     bubble.title = '点击打开';
     bubble.onclick = () => openFile(m, size);
+    for (const [action, label] of FILE_ACTIONS) {
+      const b = el('button', 'app-only', label);
+      b.onclick = () => fileAction(m, action, size);
+      actions.appendChild(b);
+    }
     const a = el('a', null, '下载');
     a.href = `/files/${m.id}`;
     actions.appendChild(a);
@@ -148,21 +159,40 @@ function render(m) {
   return row;
 }
 
+const FILE_ACTIONS = [['folder', '所在目录'], ['saveas', '另存为'], ['path', '复制路径'], ['dir', '复制目录路径']];
+const BUSY_TEXT = { open: '打开中…', folder: '准备中…', saveas: '准备中…', path: '准备中…', dir: '准备中…' };
+
+let toastTimer;
+function toast(text) {
+  $('toast').textContent = text;
+  $('toast').classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2500);
+}
+
 // 桌面 app 里交给系统默认程序打开；浏览器里在新标签页预览（浏览器不支持的类型会自动下载）
-async function openFile(m, status) {
+function openFile(m, status) {
   if (!window.pywebview?.api) return void window.open(`/files/${m.id}?inline=1`, '_blank');
-  if (!pywebview.api.open_file) {  // 本机 app 是 v1.0.0，不支持直接打开，退回下载
+  if (!pywebview.api.file_action && !pywebview.api.open_file) {  // 本机 app 是 v1.0.0，不支持直接打开，退回下载
     alert('本机的 LanChat 版本过旧，不支持点击直接打开，将改为下载。\n请到 github.com/ZFF00/lanchat/releases 下载最新版替换。');
     return void (location.href = `/files/${m.id}`);
   }
+  fileAction(m, 'open', status);
+}
+
+// 连接端第一次操作某个文件时要先从主机下载，大小一栏显示进行中
+async function fileAction(m, action, status) {
   if (status.dataset.busy) return;
   status.dataset.busy = 1;
-  status.textContent = '打开中…';
+  status.textContent = BUSY_TEXT[action];
   try {
-    const err = await pywebview.api.open_file(m.id, m.name);
-    if (err) alert(err);
+    const r = pywebview.api.file_action
+      ? await pywebview.api.file_action(m.id, m.name, action)
+      : { error: await pywebview.api.open_file(m.id, m.name) };  // v1.0.2 app 只有 open_file
+    if (r.error) alert(r.error);
+    else if (r.info) toast(r.info);
   } catch (e) {
-    alert(`打开失败：${e?.message || e}`);
+    alert(`操作失败：${e?.message || e}`);
   } finally {
     status.textContent = fmtSize(m.size);
     delete status.dataset.busy;
@@ -282,6 +312,7 @@ fetch('/api/info').then(r => r.json()).then(i => {
 // 桌面 app 里才有 window.pywebview，浏览器打开时不显示"切换"
 function enableReset() {
   pywebview.api.version?.().then(v => { $('status').dataset.v = v; });
+  if (pywebview.api.file_action) document.body.classList.add('app');
   $('reset').hidden = false;
   $('reset').onclick = () => pywebview.api.reset();
 }
