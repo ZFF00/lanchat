@@ -151,12 +151,18 @@ function render(m) {
 // 桌面 app 里交给系统默认程序打开；浏览器里在新标签页预览（浏览器不支持的类型会自动下载）
 async function openFile(m, status) {
   if (!window.pywebview?.api) return void window.open(`/files/${m.id}?inline=1`, '_blank');
+  if (!pywebview.api.open_file) {  // 本机 app 是 v1.0.0，不支持直接打开，退回下载
+    alert('本机的 LanChat 版本过旧，不支持点击直接打开，将改为下载。\n请到 github.com/ZFF00/lanchat/releases 下载最新版替换。');
+    return void (location.href = `/files/${m.id}`);
+  }
   if (status.dataset.busy) return;
   status.dataset.busy = 1;
   status.textContent = '打开中…';
   try {
     const err = await pywebview.api.open_file(m.id, m.name);
     if (err) alert(err);
+  } catch (e) {
+    alert(`打开失败：${e?.message || e}`);
   } finally {
     status.textContent = fmtSize(m.size);
     delete status.dataset.busy;
@@ -179,7 +185,7 @@ async function poll() {
     }
     if (messages.length && stick) { toBottom(); forceScroll = false; }
     document.title = unread ? `(${unread}) 新消息 - 局域网传输` : '局域网传输';
-    $('status').textContent = '已连接';
+    $('status').textContent = '已连接' + ($('status').dataset.v ? ` · app v${$('status').dataset.v}` : '');
   } catch {
     $('status').textContent = '连接断开，重试中…';
   } finally {
@@ -275,6 +281,7 @@ fetch('/api/info').then(r => r.json()).then(i => {
 }).catch(() => {});
 // 桌面 app 里才有 window.pywebview，浏览器打开时不显示"切换"
 function enableReset() {
+  pywebview.api.version?.().then(v => { $('status').dataset.v = v; });
   $('reset').hidden = false;
   $('reset').onclick = () => pywebview.api.reset();
 }

@@ -15,6 +15,7 @@ import webview
 
 import lanchat
 
+VERSION = "1.0.2"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -95,6 +96,9 @@ class Api:
                     return f"端口 {lanchat.PORT} 被其他程序占用"
         save_conf(mode="host")
         return ""
+
+    def version(self):
+        return VERSION
 
     def init(self):
         return {"last": load_conf().get("host", ""), "error": self._error}
