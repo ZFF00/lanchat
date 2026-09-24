@@ -25,6 +25,9 @@
   .me .bubble { background: #d6e8ff; }
   .bubble img { display: block; max-width: 100%; max-height: 260px; border-radius: 4px; margin-bottom: 6px; }
   .file { display: flex; gap: 10px; align-items: center; }
+  .openable { cursor: pointer; }
+  .openable:hover { filter: brightness(.96); }
+  .openable:hover .file .name { color: #3370ff; text-decoration: underline; }
   .file .icon { font-size: 26px; }
   .file .size { font-size: 12px; color: #86909c; }
   .actions { margin-top: 3px; }
@@ -128,10 +131,14 @@ function render(m) {
     }
     const f = el('div', 'file'), info = el('div');
     f.appendChild(el('span', 'icon', '📄'));
-    info.appendChild(el('div', null, m.name));
-    info.appendChild(el('div', 'size', fmtSize(m.size)));
+    info.appendChild(el('div', 'name', m.name));
+    const size = el('div', 'size', fmtSize(m.size));
+    info.appendChild(size);
     f.appendChild(info);
     bubble.appendChild(f);
+    bubble.classList.add('openable');
+    bubble.title = '点击打开';
+    bubble.onclick = () => openFile(m, size);
     const a = el('a', null, '下载');
     a.href = `/files/${m.id}`;
     actions.appendChild(a);
@@ -139,6 +146,21 @@ function render(m) {
   row.appendChild(bubble);
   row.appendChild(actions);
   return row;
+}
+
+// 桌面 app 里交给系统默认程序打开；浏览器里在新标签页预览（浏览器不支持的类型会自动下载）
+async function openFile(m, status) {
+  if (!window.pywebview?.api) return void window.open(`/files/${m.id}?inline=1`, '_blank');
+  if (status.dataset.busy) return;
+  status.dataset.busy = 1;
+  status.textContent = '打开中…';
+  try {
+    const err = await pywebview.api.open_file(m.id, m.name);
+    if (err) alert(err);
+  } finally {
+    status.textContent = fmtSize(m.size);
+    delete status.dataset.busy;
+  }
 }
 
 async function poll() {

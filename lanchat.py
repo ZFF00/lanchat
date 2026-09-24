@@ -74,6 +74,15 @@ def same_pin(value):
     return secrets.compare_digest(str(value).encode(), PIN.encode())
 
 
+def stored_path(mid):
+    """本机主机模式下，消息 mid 对应文件在磁盘上的位置；不是文件消息返回 None。"""
+    with lock:
+        m = messages[mid - 1] if 0 < mid <= len(messages) else None
+    if m and m["type"] == "file" and (FILES / m["path"]).exists():
+        return FILES / m["path"]
+    return None
+
+
 def lan_ips():
     ips = []
     try:  # 默认路由所在网卡排第一
@@ -158,14 +167,15 @@ class Handler(BaseHTTPRequestHandler):
         if not m or m["type"] != "file" or not (FILES / m["path"]).exists():
             return self.send_error(404)
         path = FILES / m["path"]
-        # 只有图片允许在页面内直接显示，其余一律下载，避免 html/svg 在本站执行脚本
-        inline = "inline" in url.query and m.get("image")
+        inline = "inline" in url.query
         quoted = urllib.parse.quote(m["name"])
         self.send_response(200)
         self.send_header("Content-Type", mimetypes.guess_type(m["name"])[0] or "application/octet-stream")
         self.send_header("Content-Length", str(path.stat().st_size))
         self.send_header("Content-Disposition", f"{'inline' if inline else 'attachment'}; filename*=UTF-8''{quoted}")
         self.send_header("X-Content-Type-Options", "nosniff")
+        # 在页面内预览时放进沙箱：即使对方发来 html/svg，脚本也无法以本站身份运行
+        self.send_header("Content-Security-Policy", "sandbox")
         self.end_headers()
         with path.open("rb") as f:
             shutil.copyfileobj(f, self.wfile, 1024**2)

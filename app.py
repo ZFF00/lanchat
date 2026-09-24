@@ -3,15 +3,23 @@
 主机端在后台跑 lanchat 服务并打开本机聊天页；连接端直接打开主机的聊天页。
 """
 import json
+import os
+import shutil
 import socket
 import time
+import urllib.parse
 import urllib.request
+from pathlib import Path
 
 import webview
 
 import lanchat
 
 CONF = lanchat.DATA / "config.json"
+RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
+# 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
+RISKY = {".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi",
+         ".msp", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".jar", ".reg", ".inf", ".appref-ms"}
 SETUP = (lanchat.RES / "setup.html").read_text(encoding="utf-8")
 LOCAL = f"127.0.0.1:{lanchat.PORT}"
 # 局域网地址不该走系统代理（桌面环境可能注入失效的代理）
@@ -108,6 +116,39 @@ class Api:
             return f"连不上 {addr}：确认对方已作为主机启动，且防火墙已放行"
         save_conf(mode="join", host=addr)
         window.load_url(f"http://{addr}/")
+
+    def open_file(self, mid, name):
+        """用系统默认程序打开第 mid 条消息里的文件，成功返回空串，否则返回提示。"""
+        mid = int(mid)
+        if Path(name).suffix.lower() in RISKY:
+            return "这是可执行文件，为安全起见不直接打开，请点“下载”后自行确认再运行"
+        path = lanchat.stored_path(mid) if self._server else None
+        if path is None:
+            try:
+                path = self._fetch(mid, name)
+            except OSError as e:
+                return f"打开失败：{e}"
+        os.startfile(path)
+        return ""
+
+    def _fetch(self, mid, name):
+        """从当前连接的主机下载文件到 received\\，已下载过的直接复用。"""
+        base = urllib.parse.urlsplit(window.get_current_url() or "").netloc or LOCAL
+        # 按主机分目录：换了主机后消息编号会重复
+        path = RECEIVED / base.replace(":", "_") / f"{mid}_{lanchat.safe_name(name)}"
+        if path.exists():
+            return path
+        pin = next((c["pin"].value for c in window.get_cookies() if "pin" in c), "")
+        req = urllib.request.Request(f"http://{base}/files/{mid}", headers={"Cookie": f"pin={pin}"})
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(".part-" + path.name)
+        try:
+            with opener.open(req, timeout=10) as r, tmp.open("wb") as f:
+                shutil.copyfileobj(r, f, 1024**2)
+            tmp.replace(path)
+        finally:
+            tmp.unlink(missing_ok=True)
+        return path
 
     def reset(self):
         save_conf(mode="")
