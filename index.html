@@ -24,27 +24,59 @@
             white-space: pre-wrap; word-break: break-word; box-shadow: 0 1px 2px rgba(0,0,0,.06); }
   .me .bubble { background: #d6e8ff; }
   .bubble img { display: block; max-width: 100%; max-height: 260px; border-radius: 4px; margin-bottom: 6px; }
-  .file { display: flex; gap: 10px; align-items: center; }
-  .openable { cursor: pointer; }
-  .openable:hover { filter: brightness(.96); }
-  .openable:hover .file .name { color: #3370ff; text-decoration: underline; }
-  .file .icon { font-size: 26px; }
-  .file .size { font-size: 12px; color: #86909c; }
-  .actions { margin-top: 3px; display: flex; gap: 10px; flex-wrap: wrap; }
-  .actions a, .actions button { color: #3370ff; background: none; border: 0; padding: 0; cursor: pointer;
-                                font-size: 12px; text-decoration: none; }
+  svg.i { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2;
+          stroke-linecap: round; stroke-linejoin: round; }
+  /* 文件消息：卡片 = 可点开的文件信息 + 底部工具栏 */
+  .bubble.card { padding: 0; overflow: hidden; width: 320px; max-width: min(88%, 420px); white-space: normal; }
+  .card img { margin: 0; border-radius: 0; max-height: 260px; cursor: pointer; }
+  .file { display: flex; gap: 12px; align-items: center; padding: 12px 14px; cursor: pointer; transition: background .15s; }
+  .file:hover { background: rgba(51,112,255,.06); }
+  .file:hover .name { color: #3370ff; }
+  .file .meta2 { min-width: 0; flex: 1; }
+  .file .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+                -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-all; }
+  .file .size { font-size: 12px; color: #86909c; margin-top: 2px; }
+  .badge { position: relative; width: 38px; height: 46px; flex: none; border-radius: 5px; color: #fff;
+           font: 700 10px/1 system-ui, sans-serif; display: flex; align-items: flex-end; justify-content: center;
+           padding-bottom: 7px; letter-spacing: .3px; box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+  .badge::after { content: ""; position: absolute; top: 0; right: 0; width: 12px; height: 12px; border-bottom-left-radius: 4px;
+                  background: linear-gradient(225deg, rgba(255,255,255,0) 50%, rgba(255,255,255,.55) 50%); }
+  .tools { display: flex; align-items: center; gap: 2px; padding: 4px 6px; border-top: 1px solid rgba(0,0,0,.06);
+           background: rgba(0,0,0,.02); }
+  .tool { display: inline-flex; align-items: center; gap: 4px; padding: 5px 8px; border-radius: 6px; border: 0;
+          background: none; color: #4e5969; font-family: inherit; font-size: 12px; line-height: 1; cursor: pointer;
+          text-decoration: none; white-space: nowrap; transition: background .15s, color .15s; }
+  .tool:hover { background: rgba(51,112,255,.1); color: #3370ff; }
+  .tool.more { margin-left: auto; padding: 5px 6px; }
+  .actions { margin-top: 2px; display: flex; opacity: .55; transition: opacity .15s; }
+  .row:hover .actions { opacity: 1; }
+  .actions .tool { padding: 3px 6px; }
   body:not(.app) .app-only { display: none; }  /* 这些操作要本机 app 支持，浏览器里隐藏 */
-  #toast { position: fixed; left: 50%; bottom: 80px; transform: translateX(-50%); background: rgba(31,35,41,.88);
-           color: #fff; padding: 6px 14px; border-radius: 6px; font-size: 13px; max-width: 80%; word-break: break-all;
-           opacity: 0; transition: opacity .2s; pointer-events: none; }
-  #toast.show { opacity: 1; }
+  body.app .web-only { display: none; }
+  #menu { position: fixed; z-index: 10; min-width: 170px; padding: 5px; background: #fff; border-radius: 8px;
+          box-shadow: 0 6px 24px rgba(0,0,0,.14), 0 0 0 1px rgba(0,0,0,.05); display: none; }
+  #menu.show { display: block; }
+  #menu button, #menu a { display: flex; width: 100%; align-items: center; gap: 10px; padding: 7px 10px; border: 0;
+                          border-radius: 5px; background: none; font-family: inherit; font-size: 13px; line-height: 1.2;
+                          color: #1f2329; cursor: pointer; text-decoration: none; text-align: left; }
+  #menu button:hover, #menu a:hover { background: #f2f3f5; }
+  #menu svg { color: #646a73; }
+  #menu hr { border: 0; border-top: 1px solid #eef0f2; margin: 4px 2px; }
+  #toast { position: fixed; left: 50%; bottom: 80px; transform: translate(-50%, 8px); background: rgba(31,35,41,.92);
+           color: #fff; padding: 8px 14px; border-radius: 8px; font-size: 13px; max-width: 80%; word-break: break-all;
+           display: flex; gap: 8px; align-items: center; box-shadow: 0 4px 16px rgba(0,0,0,.18);
+           opacity: 0; transition: opacity .2s, transform .2s; pointer-events: none; }
+  #toast.show { opacity: 1; transform: translate(-50%, 0); }
+  #toast svg { color: #34c759; }
+  #toast.error svg { color: #ff6b63; }
   footer { background: #fff; border-top: 1px solid #e5e6eb; padding: 10px 12px; display: flex; gap: 8px;
            align-items: flex-end; }
   #input { flex: 1; resize: none; border: 1px solid #e5e6eb; border-radius: 6px; padding: 8px 10px;
            font: inherit; max-height: 160px; outline: none; }
   #input:focus { border-color: #3370ff; }
   footer button { height: 40px; padding: 0 14px; border-radius: 6px; border: 1px solid #e5e6eb; background: #fff;
-                  font: inherit; cursor: pointer; white-space: nowrap; }
+                  font: inherit; cursor: pointer; white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
+  #pick:hover { border-color: #3370ff; color: #3370ff; }
   #send { background: #3370ff; color: #fff; border-color: #3370ff; }
   #drop { position: fixed; inset: 0; background: rgba(51,112,255,.12); border: 3px dashed #3370ff; display: none;
           align-items: center; justify-content: center; font-size: 22px; color: #3370ff; pointer-events: none; }
@@ -63,13 +95,14 @@
 <header><b>局域网传输</b><span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
 <div id="list"><div class="empty" id="empty">还没有消息。输入文字按回车发送，或把文件拖进来。</div></div>
 <footer>
-  <button id="pick">📎 文件</button>
+  <button id="pick">文件</button>
   <textarea id="input" rows="1" placeholder="输入消息，回车发送，Shift+回车换行；可直接粘贴截图或文件"></textarea>
   <button id="send">发送</button>
   <input type="file" id="file" multiple hidden>
 </footer>
 <div id="drop">松开即发送</div>
 <div id="toast"></div>
+<div id="menu"></div>
 <div id="login">
   <form id="loginForm">
     <b>输入访问码</b>
@@ -108,9 +141,52 @@ function fmtTime(ts) {
 function nearBottom() { return list.scrollHeight - list.scrollTop - list.clientHeight < 80; }
 function toBottom() { list.scrollTop = list.scrollHeight; }
 
+// 线条图标（Lucide 风格），用 currentColor 跟随按钮颜色
+const ICONS = {
+  open: '<path d="M15 3h6v6"/><path d="M10 14 21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>',
+  folder: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>',
+  saveas: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+  copy: '<rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>',
+  dir: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M8 12h8M8 16h5"/>',
+  download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
+  ok: '<circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/>',
+  err: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
+};
+function icon(name) {
+  const s = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  s.setAttribute('viewBox', '0 0 24 24');
+  s.setAttribute('class', 'i');
+  s.innerHTML = ICONS[name];
+  return s;
+}
+function tool(name, label, tip) {
+  const b = el('button', 'tool');
+  b.appendChild(icon(name));
+  if (label) b.appendChild(document.createTextNode(label));
+  if (tip) b.title = tip;
+  return b;
+}
+
+// 按扩展名给文件角标配色，颜色参照各类文件常见的软件图标
+const TYPES = [
+  ['#2b579a', 'doc docx wps rtf odt'], ['#217346', 'xls xlsx xlsm csv et ods'], ['#d24726', 'ppt pptx dps odp'],
+  ['#e5252a', 'pdf'], ['#8b5cf6', 'zip rar 7z tar gz tgz bz2 xz'], ['#0ea5e9', 'png jpg jpeg gif webp bmp svg ico heic'],
+  ['#db2777', 'mp4 mov mkv avi wmv flv webm'], ['#f59e0b', 'mp3 wav flac aac m4a ogg'],
+  ['#0f766e', 'py js ts html css json xml yaml yml sh c cpp h java go rs sql ipynb'],
+  ['#64748b', 'txt md log ini cfg'], ['#475569', 'exe msi bat cmd ps1 apk dmg iso'],
+];
+function badge(name) {
+  const dot = name.lastIndexOf('.'), ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+  const b = el('div', 'badge', (ext || 'file').slice(0, 4).toUpperCase());
+  b.style.background = (TYPES.find(([, exts]) => exts.split(' ').includes(ext)) || ['#94a3b8'])[0];
+  return b;
+}
+
 // 局域网 http 不是"安全上下文"，navigator.clipboard 不可用，退回 execCommand
-function copyText(text, btn) {
-  const done = () => { btn.textContent = '已复制'; setTimeout(() => btn.textContent = '复制', 1200); };
+function copyText(text) {
+  const done = () => toast('已复制');
   if (navigator.clipboard && window.isSecureContext) return navigator.clipboard.writeText(text).then(done);
   const ta = el('textarea');
   ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
@@ -121,53 +197,101 @@ function render(m) {
   const mine = m.client === client;
   const row = el('div', 'row' + (mine ? ' me' : ''));
   row.appendChild(el('div', 'meta', `${mine ? '我' : '对方 ' + m.ip} · ${fmtTime(m.ts)}`));
-  const bubble = el('div', 'bubble'), actions = el('div', 'actions');
+  const bubble = el('div', 'bubble');
+  row.appendChild(bubble);
   if (m.type === 'text') {
     bubble.textContent = m.text;
-    const b = el('button', null, '复制');
-    b.onclick = () => copyText(m.text, b);
+    const actions = el('div', 'actions'), b = tool('copy', '复制');
+    b.onclick = () => copyText(m.text);
     actions.appendChild(b);
-  } else {
-    if (m.image) {
-      const img = el('img');
-      const stick = nearBottom();
-      img.onload = () => { if (stick) toBottom(); };
-      img.src = `/files/${m.id}?inline=1`;
-      bubble.appendChild(img);
-    }
-    const f = el('div', 'file'), info = el('div');
-    f.appendChild(el('span', 'icon', '📄'));
-    info.appendChild(el('div', 'name', m.name));
-    const size = el('div', 'size', fmtSize(m.size));
-    info.appendChild(size);
-    f.appendChild(info);
-    bubble.appendChild(f);
-    bubble.classList.add('openable');
-    bubble.title = '点击打开';
-    bubble.onclick = () => openFile(m, size);
-    for (const [action, label] of FILE_ACTIONS) {
-      const b = el('button', 'app-only', label);
-      b.onclick = () => fileAction(m, action, size);
-      actions.appendChild(b);
-    }
-    const a = el('a', null, '下载');
-    a.href = `/files/${m.id}`;
-    actions.appendChild(a);
+    row.appendChild(actions);
+    return row;
   }
-  row.appendChild(bubble);
-  row.appendChild(actions);
+  bubble.classList.add('card');
+  const f = el('div', 'file'), info = el('div', 'meta2');
+  const size = el('div', 'size', fmtSize(m.size));
+  if (m.image) {
+    const img = el('img');
+    const stick = nearBottom();
+    img.onload = () => { if (stick) toBottom(); };
+    img.src = `/files/${m.id}?inline=1`;
+    img.title = '点击打开';
+    img.onclick = () => openFile(m, size);
+    bubble.appendChild(img);
+  }
+  f.appendChild(badge(m.name));
+  info.appendChild(el('div', 'name', m.name));
+  info.appendChild(size);
+  f.appendChild(info);
+  f.title = `${m.name}\n点击打开，右键更多操作`;
+  f.onclick = () => openFile(m, size);
+  bubble.appendChild(f);
+  bubble.oncontextmenu = e => { e.preventDefault(); showMenu(m, size, e.clientX, e.clientY); };
+
+  const tools = el('div', 'tools');
+  const add = (b, cls, fn) => { if (cls) b.classList.add(...cls.split(' ')); b.onclick = fn; tools.appendChild(b); };
+  add(tool('open', '打开'), null, () => openFile(m, size));
+  add(tool('folder', '所在目录', '在资源管理器中显示'), 'app-only', () => fileAction(m, 'folder', size));
+  add(tool('saveas', '另存为'), 'app-only', () => fileAction(m, 'saveas', size));
+  const dl = tool('download', '下载');
+  add(dl, 'web-only', () => { location.href = `/files/${m.id}`; });
+  const more = tool('more', null, '更多操作');
+  add(more, 'more app-only', e => {
+    e.stopPropagation();
+    const r = more.getBoundingClientRect();
+    showMenu(m, size, r.right, r.bottom + 4, true);
+  });
+  bubble.appendChild(tools);
   return row;
 }
 
-const FILE_ACTIONS = [['folder', '所在目录'], ['saveas', '另存为'], ['path', '复制路径'], ['dir', '复制目录路径']];
+// 右键菜单和"⋯"按钮共用：列出全部文件操作
+const MENU_ITEMS = [
+  ['open', '打开', 'open'], ['folder', '打开所在目录', 'folder', true], ['saveas', '另存为…', 'saveas', true], '-',
+  ['copy', '复制文件路径', 'path', true], ['dir', '复制所在目录路径', 'dir', true], '-', ['download', '下载', 'download'],
+];
+function showMenu(m, status, x, y, alignRight) {
+  const menu = $('menu'), app = document.body.classList.contains('app');
+  menu.replaceChildren();
+  for (const it of MENU_ITEMS) {
+    if (it === '-') { if (app) menu.appendChild(el('hr')); continue; }
+    const [ic, label, action, appOnly] = it;
+    if (appOnly && !app) continue;
+    const b = el('button');
+    b.append(icon(ic), label);
+    b.onclick = () => {
+      hideMenu();
+      if (action === 'open') openFile(m, status);
+      else if (action === 'download') location.href = `/files/${m.id}`;
+      else fileAction(m, action, status);
+    };
+    menu.appendChild(b);
+  }
+  menu.classList.add('show');
+  // 靠近窗口边缘时往里收，避免菜单被裁掉
+  const w = menu.offsetWidth, h = menu.offsetHeight;
+  let left = alignRight ? x - w : x, top = y;
+  if (left + w > innerWidth - 8) left = innerWidth - w - 8;
+  if (top + h > innerHeight - 8) top = Math.max(8, y - h - (alignRight ? 36 : 0));
+  menu.style.left = Math.max(8, left) + 'px';
+  menu.style.top = top + 'px';
+}
+function hideMenu() { $('menu').classList.remove('show'); }
+addEventListener('click', e => { if (!$('menu').contains(e.target)) hideMenu(); });
+addEventListener('keydown', e => { if (e.key === 'Escape') hideMenu(); });
+addEventListener('blur', hideMenu);
+list.addEventListener('scroll', hideMenu);
+
 const BUSY_TEXT = { open: '打开中…', folder: '准备中…', saveas: '准备中…', path: '准备中…', dir: '准备中…' };
 
 let toastTimer;
-function toast(text) {
-  $('toast').textContent = text;
-  $('toast').classList.add('show');
+function toast(text, error) {
+  const t = $('toast');
+  t.replaceChildren(icon(error ? 'err' : 'ok'), el('span', null, text));
+  t.classList.toggle('error', !!error);
+  t.classList.add('show');
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => $('toast').classList.remove('show'), 2500);
+  toastTimer = setTimeout(() => t.classList.remove('show'), error ? 4000 : 2500);
 }
 
 // 桌面 app 里交给系统默认程序打开；浏览器里在新标签页预览（浏览器不支持的类型会自动下载）
@@ -189,10 +313,10 @@ async function fileAction(m, action, status) {
     const r = pywebview.api.file_action
       ? await pywebview.api.file_action(m.id, m.name, action)
       : { error: await pywebview.api.open_file(m.id, m.name) };  // v1.0.2 app 只有 open_file
-    if (r.error) alert(r.error);
+    if (r.error) toast(r.error, true);
     else if (r.info) toast(r.info);
   } catch (e) {
-    alert(`操作失败：${e?.message || e}`);
+    toast(`操作失败：${e?.message || e}`, true);
   } finally {
     status.textContent = fmtSize(m.size);
     delete status.dataset.busy;
@@ -274,6 +398,7 @@ input.addEventListener('paste', e => {
   if (files.length) { e.preventDefault(); files.forEach(upload); }
 });
 $('send').onclick = sendText;
+$('pick').prepend(icon('clip'));
 $('pick').onclick = () => $('file').click();
 $('file').onchange = e => { [...e.target.files].forEach(upload); e.target.value = ''; };
 
