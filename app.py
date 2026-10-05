@@ -18,7 +18,7 @@ import webview
 
 import lanchat
 
-VERSION = "1.0.4"
+VERSION = "1.0.5"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -229,4 +229,5 @@ elif conf.get("mode") == "join":
 window = webview.create_window("局域网传输", url=url, html=None if url else SETUP, js_api=api,
                                width=900, height=680, min_size=(480, 420))
 webview.settings["ALLOW_DOWNLOADS"] = True
-webview.start(private_mode=False, storage_path=str(lanchat.DATA / "webview"))
+# 打包后 pywebview 会取 exe 自带的图标；脚本运行时 exe 是 python.exe，所以显式指定
+webview.start(private_mode=False, storage_path=str(lanchat.DATA / "webview"), icon=str(lanchat.RES / "icon.ico"))

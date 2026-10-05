@@ -51,8 +51,9 @@ python lanchat.py
 
 ```powershell
 python -m venv .venv
-.venv\Scripts\python.exe -m pip install pywebview pyinstaller
-.venv\Scripts\python.exe -m PyInstaller --noconfirm --onefile --windowed --name LanChat --add-data "index.html;." --add-data "setup.html;." app.py
+.venv\Scripts\python.exe -m pip install pywebview pyinstaller pillow
+.venv\Scripts\python.exe make_icon.py   # 改了图标设计才需要重新生成 icon.ico
+.venv\Scripts\python.exe -m PyInstaller --noconfirm --onefile --windowed --name LanChat --icon icon.ico --add-data "index.html;." --add-data "setup.html;." --add-data "icon.ico;." app.py
 ```
 
 产物在 `dist\LanChat.exe`。窗口依赖系统自带的 WebView2（Windows 10/11 通常已预装）。
@@ -66,6 +67,7 @@ python -m venv .venv
 | `app.py` | 桌面 app 外壳（pywebview），负责主机/连接模式选择 |
 | `setup.html` | 首次启动的模式选择页 |
 | `start.bat` | 双击以浏览器方式启动服务 |
+| `icon.ico` / `make_icon.py` | app 图标及其生成脚本 |
 
 ## 安全说明
 
