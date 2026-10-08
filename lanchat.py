@@ -49,6 +49,15 @@ else:
     PIN = f"{secrets.randbelow(10000):04d}"
     PIN_FILE.write_text(PIN, encoding="utf-8")
 
+# 设备编号：首次运行随机生成，之后固定；连接端靠它认出 IP 变了的同一台主机
+DEVICE_FILE = DATA / "device_id.txt"
+if DEVICE_FILE.exists():
+    DEVICE_ID = DEVICE_FILE.read_text(encoding="utf-8").strip()
+else:
+    DEVICE_ID = secrets.token_hex(8)
+    DEVICE_FILE.write_text(DEVICE_ID, encoding="utf-8")
+HOSTNAME = socket.gethostname()
+
 
 def add(msg):
     with lock:
@@ -142,6 +151,8 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
+        if url.path == "/api/device":  # 不需访问码：与局域网广播应答公开的内容相同
+            return self.send_json({"id": DEVICE_ID, "hostname": HOSTNAME})
         if not self.authed():
             return self.send_json({"error": "pin"}, 401)
         if url.path == "/api/messages":
@@ -243,7 +254,8 @@ def answer_discovery():
         while True:
             data, addr = s.recvfrom(64)
             if data == b"LANCHAT?":
-                s.sendto(f"LANCHAT {PORT}".encode(), addr)
+                # 旧版连接端只取第 2 段端口，且用 64 字节缓冲接收（Windows 上超长会整条丢弃），电脑名截短
+                s.sendto(f"LANCHAT {PORT} {DEVICE_ID} {HOSTNAME}".encode()[:64], addr)
 
 
 def start():
@@ -260,7 +272,7 @@ if __name__ == "__main__":
     except OSError as e:
         sys.exit(f"端口 {PORT} 无法使用（可能已经在运行）：{e}")
     threading.Thread(target=answer_discovery, daemon=True).start()
-    print("局域网传输已启动，两台电脑的浏览器都打开下面任一地址：")
+    print("LanChat 已启动，两台电脑的浏览器都打开下面任一地址：")
     for ip in lan_ips():
         print(f"    http://{ip}:{PORT}")
     print(f"本机也可用 http://localhost:{PORT}")

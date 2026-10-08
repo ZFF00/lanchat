@@ -18,7 +18,7 @@ import webview
 
 import lanchat
 
-VERSION = "1.0.5"
+VERSION = "1.0.6"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -83,11 +83,22 @@ def reachable(addr):
         return False
 
 
+def device_info(addr):
+    """主机的设备编号和电脑名；v1.0.5 及更早的主机没有这个接口，返回 None。"""
+    try:
+        with opener.open(f"http://{addr}/api/device", timeout=2) as r:
+            info = json.loads(r.read())
+        return info if info.get("id") else None
+    except (OSError, ValueError):
+        return None
+
+
 def discover(timeout=1.5):
+    """广播搜索主机，返回 [{"addr", "id", "hostname"}]；旧版主机的应答里没有编号和电脑名。"""
     own = set(lanchat.lan_ips())
     # 255.255.255.255 只从默认网卡发出，再按 /24 给每块网卡补一个定向广播
     targets = {"255.255.255.255"} | {ip.rsplit(".", 1)[0] + ".255" for ip in own}
-    found = []
+    found = {}
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
         s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         s.settimeout(0.3)
@@ -99,14 +110,50 @@ def discover(timeout=1.5):
         end = time.time() + timeout
         while time.time() < end:
             try:
-                data, (ip, _) = s.recvfrom(64)
+                data, (ip, _) = s.recvfrom(256)
             except OSError:  # 超时，或 Windows 把 ICMP 不可达报成 ConnectionResetError
                 continue
             if data.startswith(b"LANCHAT ") and ip not in own:
-                addr = f"{ip}:{data.split()[1].decode()}"
-                if addr not in found:
-                    found.append(addr)
-    return found
+                parts = data.decode(errors="replace").split() + ["", ""]
+                addr = f"{ip}:{parts[1]}"
+                found.setdefault(addr, {"addr": addr, "id": parts[2], "hostname": parts[3]})
+    return list(found.values())
+
+
+def favorites():
+    return load_conf().get("favorites", [])
+
+
+def remember(addr):
+    """连上一台主机后记进常用设备：同一编号只更新 IP 和电脑名，自定义名字保持不变。"""
+    info = device_info(addr) or {}
+    # 旧版主机拿不到编号，暂用地址当编号；它升级后换成真编号，原来起的名字沿用
+    dev_id = info.get("id") or f"addr:{addr}"
+    favs = favorites()
+    placeholder = next((f for f in favs if f["id"] == f"addr:{addr}" != dev_id), None)
+    if placeholder:
+        favs.remove(placeholder)
+    fav = next((f for f in favs if f["id"] == dev_id), None)
+    if fav is None:
+        name = placeholder["name"] if placeholder else info.get("hostname") or addr
+        fav = {"id": dev_id, "hostname": info.get("hostname", ""), "name": name}
+        favs.append(fav)
+    fav["addr"] = addr
+    if info.get("hostname"):
+        fav["hostname"] = info["hostname"]
+    save_conf(favorites=favs)
+    return dev_id
+
+
+def locate(fav):
+    """找到常用设备当前的地址：先试上次的 IP，不对再广播按编号找。找不到返回 None。"""
+    if fav["id"].startswith("addr:"):
+        return fav["addr"] if reachable(fav["addr"]) else None
+    info = device_info(fav["addr"])
+    if info and info["id"] == fav["id"]:
+        return fav["addr"]
+    # IP 变了，或者原 IP 现在被另一台主机占着
+    return next((h["addr"] for h in discover() if h["id"] == fav["id"]), None)
 
 
 class Api:
@@ -130,7 +177,8 @@ class Api:
         return VERSION
 
     def init(self):
-        return {"last": load_conf().get("host", ""), "error": self._error}
+        conf = load_conf()
+        return {"last": conf.get("host", ""), "error": self._error, "favorites": conf.get("favorites", [])}
 
     def find(self):
         return discover()
@@ -147,8 +195,31 @@ class Api:
             return "请输入地址"
         if not reachable(addr):
             return f"连不上 {addr}：确认对方已作为主机启动，且防火墙已放行"
-        save_conf(mode="join", host=addr)
+        save_conf(mode="join", host=addr, host_id=remember(addr))
         window.load_url(f"http://{addr}/")
+
+    def open_favorite(self, dev_id):
+        fav = next((f for f in favorites() if f["id"] == dev_id), None)
+        if fav is None:
+            return "这台设备已不在常用列表里"
+        addr = locate(fav)
+        if addr is None:
+            return (f"找不到「{fav['name']}」（上次地址 {fav['addr']}）：确认对方已作为主机启动；"
+                    "如果它换了 IP 又不在同一网段，请在下面手动输入新地址，连上后会自动更新这一条")
+        return self.join(addr)
+
+    def rename_favorite(self, dev_id, name):
+        favs = favorites()
+        for f in favs:
+            if f["id"] == dev_id:
+                f["name"] = name.strip() or f["hostname"] or f["addr"]  # 清空即恢复成电脑名
+        save_conf(favorites=favs)
+        return favs
+
+    def remove_favorite(self, dev_id):
+        favs = [f for f in favorites() if f["id"] != dev_id]
+        save_conf(favorites=favs)
+        return favs
 
     def open_file(self, mid, name):
         """兼容 v1.0.2 页面：等同 file_action(..., "open")，返回提示文本。"""
@@ -221,12 +292,17 @@ if conf.get("mode") == "host":
     api._error = api._start_host()
     url = None if api._error else f"http://{LOCAL}/"
 elif conf.get("mode") == "join":
-    if reachable(conf["host"]):
-        url = f"http://{conf['host']}/"
+    # 上次的主机若在常用设备里，IP 变了也能按编号找回来
+    last = next((f for f in conf.get("favorites", []) if f["id"] == conf.get("host_id")), None)
+    addr = locate(last) if last else (conf["host"] if reachable(conf["host"]) else None)
+    if addr:
+        if addr != conf["host"]:
+            save_conf(host=addr, host_id=remember(addr))
+        url = f"http://{addr}/"
     else:
         api._error = f"上次连接的主机 {conf['host']} 现在连不上，确认它已开启后重试"
 
-window = webview.create_window("局域网传输", url=url, html=None if url else SETUP, js_api=api,
+window = webview.create_window("LanChat", url=url, html=None if url else SETUP, js_api=api,
                                width=900, height=680, min_size=(480, 420))
 webview.settings["ALLOW_DOWNLOADS"] = True
 # 打包后 pywebview 会取 exe 自带的图标；脚本运行时 exe 是 python.exe，所以显式指定

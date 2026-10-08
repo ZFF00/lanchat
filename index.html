@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>局域网传输</title>
+<title>LanChat</title>
 <!-- 与 make_icon.py 生成的 icon.ico 同一图形 -->
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 256 256'><defs><linearGradient id='g' x2='0' y2='1'><stop stop-color='%234d8bff'/><stop offset='1' stop-color='%232a5bf0'/></linearGradient></defs><rect x='8' y='8' width='240' height='240' rx='52' fill='url(%23g)'/><g fill='%23fff' opacity='.55'><rect x='44' y='54' width='124' height='86' rx='30'/><polygon points='64,128 56,166 100,136'/></g><g fill='%23fff'><rect x='88' y='102' width='124' height='86' rx='30'/><polygon points='192,176 202,212 156,186'/></g><path d='M118 134h60M118 160h36' stroke='%233370ff' stroke-width='13' stroke-linecap='round'/></svg>">
 <style>
@@ -94,7 +94,7 @@
 </style>
 </head>
 <body>
-<header><b>局域网传输</b><span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
+<header><b>LanChat</b><span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
 <div id="list"><div class="empty" id="empty">还没有消息。输入文字按回车发送，或把文件拖进来。</div></div>
 <footer>
   <button id="pick">文件</button>
@@ -340,7 +340,7 @@ async function poll() {
       if (m.client !== client && document.hidden) unread++;
     }
     if (messages.length && stick) { toBottom(); forceScroll = false; }
-    document.title = unread ? `(${unread}) 新消息 - 局域网传输` : '局域网传输';
+    document.title = unread ? `(${unread}) 新消息 - LanChat` : 'LanChat';
     $('status').textContent = '已连接' + ($('status').dataset.v ? ` · app v${$('status').dataset.v}` : '');
   } catch {
     $('status').textContent = '连接断开，重试中…';
@@ -349,7 +349,7 @@ async function poll() {
   }
 }
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) { unread = 0; document.title = '局域网传输'; }
+  if (!document.hidden) { unread = 0; document.title = 'LanChat'; }
 });
 
 async function sendText() {
