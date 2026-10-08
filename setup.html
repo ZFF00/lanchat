@@ -23,7 +23,7 @@
   #msg { font-size: 13px; color: #f54a45; text-align: center; min-height: 20px; }
   svg.i { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
   /* 常用设备：点整行连接，右侧改名、删除 */
-  #favCard[hidden] { display: none; }
+  .empty { font-size: 13px; color: #86909c; padding: 10px 0 2px; }
   .dev { display: flex; align-items: center; gap: 12px; padding: 10px 8px; margin: 0 -8px; border-radius: 8px; cursor: pointer;
          transition: background .15s; }
   .dev:hover { background: #f2f6ff; }
@@ -45,7 +45,7 @@
 <body>
 <main>
   <h1>LanChat</h1>
-  <div class="card" id="favCard" hidden>
+  <div class="card">
     <b>常用设备</b>
     <div class="hint">点一下直接连接；对方换了 IP 也会自动找到。</div>
     <div id="favs"></div>
@@ -98,13 +98,15 @@ function tool(name, tip, cls) {
 }
 
 function renderFavs() {
-  $('favCard').hidden = !favs.length;
+  if (!favs.length) {
+    return void $('favs').replaceChildren(el('div', 'empty', '还没有常用设备，连接过的主机会自动出现在这里。'));
+  }
   $('favs').replaceChildren(...favs.map(f => {
     const row = el('div', 'dev'), txt = el('div', 'txt'), name = el('div', 'name', f.name);
     const pc = el('div', 'pc');
     pc.appendChild(icon('pc'));
     // 副标题：电脑名（自定义名字与它相同时不重复显示）+ 上次的 IP
-    const sub = [f.hostname && f.hostname !== f.name ? f.hostname : '', f.addr].filter(Boolean).join(' · ');
+    const sub = [f.hostname && f.hostname !== f.name ? f.hostname : '', f.addr !== f.name ? f.addr : ''].filter(Boolean).join(' · ');
     txt.append(name, el('div', 'sub', sub));
     const edit = tool('edit', '改名'), del = tool('del', '从常用设备中移除', 'del');
     row.append(pc, txt, edit, del);

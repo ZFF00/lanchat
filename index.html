@@ -17,6 +17,21 @@
   #status, #info { font-size: 12px; color: #86909c; }
   #info { margin-right: 12px; user-select: text; }
   #reset { margin-left: 10px; font-size: 12px; color: #3370ff; background: none; border: 0; cursor: pointer; }
+  .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
+  #dev { display: inline-flex; align-items: center; gap: 6px; max-width: 280px; height: 28px; padding: 0 8px 0 10px;
+         border: 1px solid #e5e6eb; border-radius: 14px; background: #f7f8fa; color: #1f2329; font: inherit;
+         font-size: 13px; cursor: pointer; transition: border-color .15s, background .15s; }
+  #dev[hidden] { display: none; }
+  #dev:hover { border-color: #3370ff; background: #fff; }
+  #dev #devName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #dev svg { color: #86909c; flex: none; }
+  #menu .dev-item { align-items: center; min-width: 240px; }
+  #menu .dev-txt { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+  #menu .dev-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #menu .dev-sub { font-size: 12px; color: #86909c; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #menu .dev-item.here { color: #3370ff; }
+  #menu .dev-item.here svg { color: #3370ff; }
+  #menu .dev-empty { font-size: 13px; color: #86909c; padding: 7px 10px; }
   #list { flex: 1; overflow-y: auto; padding: 16px; }
   .empty { text-align: center; color: #86909c; margin-top: 30vh; }
   .row { display: flex; flex-direction: column; align-items: flex-start; margin-bottom: 14px; }
@@ -94,7 +109,7 @@
 </style>
 </head>
 <body>
-<header><b>LanChat</b><span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
+<header><span class="brand"><b>LanChat</b><button id="dev" hidden><span id="devName"></span></button></span><span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
 <div id="list"><div class="empty" id="empty">还没有消息。输入文字按回车发送，或把文件拖进来。</div></div>
 <footer>
   <button id="pick">文件</button>
@@ -152,6 +167,10 @@ const ICONS = {
   dir: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M8 12h8M8 16h5"/>',
   download: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m7 10 5 5 5-5"/><path d="M12 15V3"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
+  pc: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  chevron: '<path d="m6 9 6 6 6-6"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
   clip: '<path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/>',
   ok: '<circle cx="12" cy="12" r="10"/><path d="m8 12 3 3 5-6"/>',
   err: '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>',
@@ -269,6 +288,10 @@ function showMenu(m, status, x, y, alignRight) {
     };
     menu.appendChild(b);
   }
+  placeMenu(x, y, alignRight);
+}
+function placeMenu(x, y, alignRight) {
+  const menu = $('menu');
   menu.classList.add('show');
   // 靠近窗口边缘时往里收，避免菜单被裁掉
   const w = menu.offsetWidth, h = menu.offsetHeight;
@@ -278,8 +301,48 @@ function showMenu(m, status, x, y, alignRight) {
   menu.style.left = Math.max(8, left) + 'px';
   menu.style.top = top + 'px';
 }
+
+// 顶部设备切换器（仅新版桌面 app）：显示正连着哪台，下拉切换到其他常用设备
+let devState = null;
+async function refreshDevices() {
+  devState = await pywebview.api.devices();
+  const { mode, current, favorites } = devState;
+  const cur = favorites.find(f => f.id === current);
+  $('devName').textContent = mode === 'host' ? '本机（主机）' : cur ? cur.name : location.host;
+  $('dev').title = mode === 'host' ? '这台电脑是主机'
+    : cur ? [cur.hostname, location.host].filter(Boolean).join(' · ') : location.host;
+}
+async function showDevMenu() {
+  await refreshDevices();
+  const menu = $('menu'), { mode, current, favorites } = devState;
+  menu.replaceChildren();
+  for (const f of favorites) {
+    const b = el('button', 'dev-item'), txt = el('span', 'dev-txt');
+    const here = mode === 'join' && f.id === current;
+    txt.append(el('span', 'dev-name', f.name),
+               el('span', 'dev-sub', [f.hostname && f.hostname !== f.name ? f.hostname : '', f.addr !== f.name ? f.addr : ''].filter(Boolean).join(' · ')));
+    b.append(icon('pc'), txt);
+    if (here) { b.appendChild(icon('check')); b.classList.add('here'); }
+    b.onclick = async () => {
+      hideMenu();
+      if (here) return;
+      $('devName').textContent = `${f.name} · 连接中…`;
+      const err = await pywebview.api.open_favorite(f.id);
+      if (err) { toast(err, true); refreshDevices(); }
+    };
+    menu.appendChild(b);
+  }
+  if (!favorites.length) menu.appendChild(el('div', 'dev-empty', '还没有常用设备'));
+  menu.appendChild(el('hr'));
+  const manage = el('button');
+  manage.append(icon('gear'), '管理设备 / 连接新设备…');
+  manage.onclick = () => { hideMenu(); pywebview.api.reset(); };
+  menu.appendChild(manage);
+  const r = $('dev').getBoundingClientRect();
+  placeMenu(r.left, r.bottom + 4);
+}
 function hideMenu() { $('menu').classList.remove('show'); }
-addEventListener('click', e => { if (!$('menu').contains(e.target)) hideMenu(); });
+addEventListener('click', e => { if (!$('menu').contains(e.target) && !$('dev').contains(e.target)) hideMenu(); });
 addEventListener('keydown', e => { if (e.key === 'Escape') hideMenu(); });
 addEventListener('blur', hideMenu);
 list.addEventListener('scroll', hideMenu);
@@ -442,6 +505,12 @@ function enableReset() {
   if (pywebview.api.file_action) document.body.classList.add('app');
   $('reset').hidden = false;
   $('reset').onclick = () => pywebview.api.reset();
+  if (pywebview.api.devices) {  // v1.0.6 起的 app 才有设备切换器
+    $('dev').hidden = false;
+    $('dev').appendChild(icon('chevron'));
+    $('dev').onclick = () => $('menu').classList.contains('show') ? hideMenu() : showDevMenu();
+    refreshDevices();
+  }
 }
 if (window.pywebview?.api) enableReset(); else addEventListener('pywebviewready', enableReset);
 

@@ -8,6 +8,7 @@ import os
 import shutil
 import socket
 import subprocess
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -93,8 +94,27 @@ def device_info(addr):
         return None
 
 
+def reverse_name(addr, timeout=2):
+    """旧版主机不报电脑名时，按 IP 向局域网反查（NetBIOS/LLMNR/DNS）；查不到返回空串。"""
+    ip = addr.rsplit(":", 1)[0]
+    result = []
+
+    def lookup():
+        try:
+            result.append(socket.gethostbyaddr(ip)[0])
+        except OSError:
+            pass
+
+    # gethostbyaddr 没有超时参数，放进线程里等，避免网络不通时卡住界面
+    t = threading.Thread(target=lookup, daemon=True)
+    t.start()
+    t.join(timeout)
+    name = result[0].split(".")[0] if result else ""
+    return "" if not name or name == ip.split(".")[0] else name.upper()
+
+
 def discover(timeout=1.5):
-    """广播搜索主机，返回 [{"addr", "id", "hostname"}]；旧版主机的应答里没有编号和电脑名。"""
+    """广播搜索主机，返回 [{"addr", "id", "hostname"}]；旧版主机的应答里没有编号，电脑名靠反查。"""
     own = set(lanchat.lan_ips())
     # 255.255.255.255 只从默认网卡发出，再按 /24 给每块网卡补一个定向广播
     targets = {"255.255.255.255"} | {ip.rsplit(".", 1)[0] + ".255" for ip in own}
@@ -117,6 +137,14 @@ def discover(timeout=1.5):
                 parts = data.decode(errors="replace").split() + ["", ""]
                 addr = f"{ip}:{parts[1]}"
                 found.setdefault(addr, {"addr": addr, "id": parts[2], "hostname": parts[3]})
+    # 旧版主机并行反查电脑名
+    old = [h for h in found.values() if not h["hostname"]]
+    threads = [threading.Thread(target=lambda h=h: h.update(hostname=reverse_name(h["addr"])), daemon=True)
+               for h in old]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(2.5)
     return list(found.values())
 
 
@@ -127,6 +155,7 @@ def favorites():
 def remember(addr):
     """连上一台主机后记进常用设备：同一编号只更新 IP 和电脑名，自定义名字保持不变。"""
     info = device_info(addr) or {}
+    hostname = info.get("hostname", "")
     # 旧版主机拿不到编号，暂用地址当编号；它升级后换成真编号，原来起的名字沿用
     dev_id = info.get("id") or f"addr:{addr}"
     favs = favorites()
@@ -135,12 +164,16 @@ def remember(addr):
         favs.remove(placeholder)
     fav = next((f for f in favs if f["id"] == dev_id), None)
     if fav is None:
-        name = placeholder["name"] if placeholder else info.get("hostname") or addr
-        fav = {"id": dev_id, "hostname": info.get("hostname", ""), "name": name}
+        # 旧版主机不报电脑名，只在第一次收藏时反查一次（查不到要等满超时，不能每次连接都查）
+        hostname = hostname or reverse_name(addr)
+        name = placeholder["name"] if placeholder else hostname or addr
+        fav = {"id": dev_id, "hostname": hostname, "name": name}
         favs.append(fav)
+    if hostname:
+        if fav["name"] in ("", fav.get("addr"), addr):  # 之前没查到电脑名、名字还是 IP 的，换成电脑名
+            fav["name"] = hostname
+        fav["hostname"] = hostname
     fav["addr"] = addr
-    if info.get("hostname"):
-        fav["hostname"] = info["hostname"]
     save_conf(favorites=favs)
     return dev_id
 
@@ -220,6 +253,12 @@ class Api:
         favs = [f for f in favorites() if f["id"] != dev_id]
         save_conf(favorites=favs)
         return favs
+
+    def devices(self):
+        """聊天页顶部设备切换器用：当前模式、正连着的设备编号、常用设备列表。"""
+        conf = load_conf()
+        return {"mode": conf.get("mode", ""), "current": conf.get("host_id", ""),
+                "favorites": conf.get("favorites", [])}
 
     def open_file(self, mid, name):
         """兼容 v1.0.2 页面：等同 file_action(..., "open")，返回提示文本。"""
