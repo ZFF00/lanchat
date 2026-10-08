@@ -12,6 +12,7 @@ import threading
 import time
 import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from ctypes import wintypes
 from pathlib import Path
 
@@ -19,7 +20,7 @@ import webview
 
 import lanchat
 
-VERSION = "1.0.6"
+VERSION = "1.0.7"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -113,8 +114,8 @@ def reverse_name(addr, timeout=2):
     return "" if not name or name == ip.split(".")[0] else name.upper()
 
 
-def discover(timeout=1.5):
-    """广播搜索主机，返回 [{"addr", "id", "hostname"}]；旧版主机的应答里没有编号，电脑名靠反查。"""
+def discover(timeout=1.5, names=True):
+    """广播搜索主机，返回 [{"addr", "id", "hostname"}]；旧版主机的应答里没有编号，电脑名靠反查（names=False 时跳过）。"""
     own = set(lanchat.lan_ips())
     # 255.255.255.255 只从默认网卡发出，再按 /24 给每块网卡补一个定向广播
     targets = {"255.255.255.255"} | {ip.rsplit(".", 1)[0] + ".255" for ip in own}
@@ -138,7 +139,7 @@ def discover(timeout=1.5):
                 addr = f"{ip}:{parts[1]}"
                 found.setdefault(addr, {"addr": addr, "id": parts[2], "hostname": parts[3]})
     # 旧版主机并行反查电脑名
-    old = [h for h in found.values() if not h["hostname"]]
+    old = [h for h in found.values() if not h["hostname"]] if names else []
     threads = [threading.Thread(target=lambda h=h: h.update(hostname=reverse_name(h["addr"])), daemon=True)
                for h in old]
     for t in threads:
@@ -178,12 +179,19 @@ def remember(addr):
     return dev_id
 
 
+def hosting_at(fav):
+    """常用设备上次的地址上，现在是不是这台设备在当主机。"""
+    if fav["id"].startswith("addr:"):  # 旧版主机没有编号，只能看地址上有没有 LanChat
+        return reachable(fav["addr"])
+    info = device_info(fav["addr"])
+    return bool(info) and info["id"] == fav["id"]
+
+
 def locate(fav):
     """找到常用设备当前的地址：先试上次的 IP，不对再广播按编号找。找不到返回 None。"""
     if fav["id"].startswith("addr:"):
         return fav["addr"] if reachable(fav["addr"]) else None
-    info = device_info(fav["addr"])
-    if info and info["id"] == fav["id"]:
+    if hosting_at(fav):
         return fav["addr"]
     # IP 变了，或者原 IP 现在被另一台主机占着
     return next((h["addr"] for h in discover() if h["id"] == fav["id"]), None)
@@ -259,6 +267,20 @@ class Api:
         conf = load_conf()
         return {"mode": conf.get("mode", ""), "current": conf.get("host_id", ""),
                 "favorites": conf.get("favorites", [])}
+
+    def status(self):
+        """检测各常用设备此刻是否以主机模式运行，返回 {编号: True/False}。
+
+        各设备上次的地址并行探测，同时广播搜索一次，IP 变了的同一编号也算可连接。
+        """
+        favs = favorites()
+        with ThreadPoolExecutor(max_workers=len(favs) + 1) as pool:
+            found = pool.submit(discover, names=False)
+            probes = {f["id"]: pool.submit(hosting_at, f) for f in favs}
+            hosts = found.result()
+        ids = {h["id"] for h in hosts if h["id"]}
+        addrs = {h["addr"] for h in hosts}
+        return {fid: p.result() or fid in ids or fid.removeprefix("addr:") in addrs for fid, p in probes.items()}
 
     def open_file(self, mid, name):
         """兼容 v1.0.2 页面：等同 file_action(..., "open")，返回提示文本。"""

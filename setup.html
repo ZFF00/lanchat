@@ -40,6 +40,12 @@
   .dev .tool.del:hover { color: #f54a45; }
   .dev input { height: 30px; font-weight: 500; }
   .dev.busy { opacity: .6; pointer-events: none; }
+  .dot { width: 8px; height: 8px; flex: none; border-radius: 50%; background: #c9cdd4; }
+  .checking .dot { animation: blink 1s infinite; }
+  .online .dot { background: #34c759; }
+  .dev.offline .name, .dev.offline .pc { opacity: .5; }
+  .dev.offline:hover { background: #f7f8fa; }
+  @keyframes blink { 50% { opacity: .3; } }
 </style>
 </head>
 <body>
@@ -70,7 +76,7 @@
 <script>
 const $ = id => document.getElementById(id);
 const say = t => { $('msg').textContent = t; };
-let favs = [];
+let favs = [], online = null;  // online: 检测结果 {编号: 是否在当主机}，检测完成前为 null
 
 const ICONS = {
   pc: '<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>',
@@ -102,16 +108,19 @@ function renderFavs() {
     return void $('favs').replaceChildren(el('div', 'empty', '还没有常用设备，连接过的主机会自动出现在这里。'));
   }
   $('favs').replaceChildren(...favs.map(f => {
-    const row = el('div', 'dev'), txt = el('div', 'txt'), name = el('div', 'name', f.name);
+    const state = online === null ? 'checking' : online[f.id] ? 'online' : 'offline';
+    const row = el('div', 'dev ' + state), txt = el('div', 'txt'), name = el('div', 'name', f.name);
     const pc = el('div', 'pc');
     pc.appendChild(icon('pc'));
-    // 副标题：电脑名（自定义名字与它相同时不重复显示）+ 上次的 IP
-    const sub = [f.hostname && f.hostname !== f.name ? f.hostname : '', f.addr !== f.name ? f.addr : ''].filter(Boolean).join(' · ');
+    // 副标题：电脑名（自定义名字与它相同时不重复显示）+ 上次的 IP + 状态
+    const sub = [f.hostname && f.hostname !== f.name ? f.hostname : '', f.addr !== f.name ? f.addr : '',
+                 state === 'offline' ? '未作为主机' : ''].filter(Boolean).join(' · ');
     txt.append(name, el('div', 'sub', sub));
     const edit = tool('edit', '改名'), del = tool('del', '从常用设备中移除', 'del');
-    row.append(pc, txt, edit, del);
-    row.title = `连接 ${f.name}`;
+    row.append(el('span', 'dot'), pc, txt, edit, del);
+    row.title = state === 'offline' ? `${f.name} 当前没有作为主机运行` : `连接 ${f.name}`;
     row.onclick = async () => {
+      if (state === 'offline') return say(`「${f.name}」当前没有作为主机运行，请先在那台电脑上点「作为主机启动」`);
       row.classList.add('busy'); name.textContent = `${f.name} · 连接中…`; say('');
       try { const err = await pywebview.api.open_favorite(f.id); if (err) say(err); }
       finally { row.classList.remove('busy'); name.textContent = f.name; }
@@ -165,6 +174,7 @@ window.addEventListener('pywebviewready', async () => {
   if (init.error) say(init.error);
   favs = init.favorites || [];
   renderFavs();
+  if (favs.length) pywebview.api.status().then(st => { online = st; renderFavs(); });
 
   $('host').onclick = busy($('host'), '启动中…', () => pywebview.api.host());
   const join = busy($('join'), '连接中…', addr => pywebview.api.join(addr ?? $('addr').value));
