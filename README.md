@@ -41,6 +41,28 @@ New-NetFirewallRule -DisplayName "LanChat discovery" -Direction Inbound -Protoco
 - **exe 被 Windows 拦截**：未签名程序可能被 SmartScreen / 智能应用控制拦下，稍等片刻再运行，或选择"仍要运行"。
 - **数据存在哪**：`%APPDATA%\LanChat`（聊天记录 `messages.jsonl`、收到的文件 `files\`、访问码 `pin.txt`）。
 
+### 连接状态
+
+- 主机窗口顶部显示连着本机的设备：绿点为在线；对方关掉 app、断网或改去连别的主机，约 10 秒后显示"已断开 · 多久之前"
+- 连接端与主机断开时，顶部显示红字"与主机的连接已断开，重试中…"，恢复后自动继续
+
+## 命令行工具
+
+Releases 里的 `lanchat-cli.exe`（或源码里的 `python cli.py`）与桌面 app 共用配置、常用设备和访问码，app 不开也能用：
+
+```powershell
+lanchat-cli status                    # 本机模式、连着谁、谁连着本机、常用设备是否在线、最近同步
+lanchat-cli status --json             # 同上，输出 JSON；主机连不上时退出码为 1
+lanchat-cli send 你好                  # 发给当前连着的主机（本机是主机时发到本机）
+lanchat-cli send 报告.pdf 截图.png      # 参数是已存在的文件就当文件发
+lanchat-cli send -t 笔记本HP 你好       # -t：常用设备名、电脑名、IP[:端口] 或 本机
+lanchat-cli watch                     # 持续显示新消息，连接断开/恢复时提示
+lanchat-cli pull -o 收件               # 下载聊天里的所有文件，已下载的跳过
+lanchat-cli login -t 192.168.3.136    # 输入并记住访问码
+```
+
+主机还提供 `GET /api/status`（谁连着、各自最后活动和最后同步时间），需要访问码，本机访问免。
+
 ## 不装 app：浏览器方式
 
 需要 Python 3.10+，无第三方依赖。主机上运行：
@@ -66,7 +88,9 @@ python -m venv .venv
 
 | 文件 | 作用 |
 |---|---|
-| `lanchat.py` | 聊天服务（仅标准库）：消息、文件上传下载、访问码、局域网广播应答 |
+| `lanchat.py` | 聊天服务（仅标准库）：消息、文件上传下载、访问码、局域网广播应答、连接状态 |
+| `common.py` | 主机服务、app、命令行共用的路径和局域网工具 |
+| `cli.py` | 命令行工具 |
 | `index.html` | 聊天界面 |
 | `app.py` | 桌面 app 外壳（pywebview），负责主机/连接模式选择 |
 | `setup.html` | 首次启动的模式选择页 |

@@ -5,7 +5,6 @@
 import hashlib
 import json
 import mimetypes
-import os
 import re
 import secrets
 import shutil
@@ -18,13 +17,9 @@ from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-PORT = int(os.environ.get("LANCHAT_PORT", 8765))
-DISCOVERY_PORT = PORT + 1
-BASE = Path(__file__).resolve().parent
+from common import BASE, DATA, DEVICE_FILE, DISCOVERY_PORT, ONLINE_SECS, PORT, lan_ips
+
 RES = Path(getattr(sys, "_MEIPASS", BASE))  # 打包成 exe 后，index.html 解压在 _MEIPASS 下
-# exe 所在目录可能随手放在桌面/下载，数据统一放 %APPDATA%\LanChat；脚本运行时仍放在脚本旁
-DATA = Path(os.environ["APPDATA"]) / "LanChat" if getattr(sys, "frozen", False) else BASE / "data"
-DATA = Path(os.environ.get("LANCHAT_DATA") or DATA)  # 测试时让两个实例用各自的数据目录
 FILES = DATA / "files"
 LOG = DATA / "messages.jsonl"
 PIN_FILE = DATA / "pin.txt"
@@ -87,7 +82,6 @@ else:
     PIN_FILE.write_text(PIN, encoding="utf-8")
 
 # 设备编号：首次运行随机生成，之后固定；连接端靠它认出 IP 变了的同一台主机
-DEVICE_FILE = DATA / "device_id.txt"
 if DEVICE_FILE.exists():
     DEVICE_ID = DEVICE_FILE.read_text(encoding="utf-8").strip()
 else:
@@ -106,6 +100,45 @@ def add(msg):
         with LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(msg, ensure_ascii=False) + "\n")
     return msg
+
+
+def place(tmp, name):
+    """把收完的临时文件放进 files\\<随机目录>\\<原文件名>，返回相对路径。
+
+    每个文件单独一个目录：同名文件互不覆盖，打开、定位、复制路径看到的又都是原名。
+    """
+    folder = FILES / secrets.token_hex(4)
+    folder.mkdir()
+    tmp.replace(folder / name)
+    return f"{folder.name}/{name}"
+
+
+def migrate_prefixed():
+    """v1.0.9 及更早存成 files\\<8位随机>_<原名>，挪进同名的单独目录，去掉文件名前缀。"""
+    moved = 0
+    for m in messages:
+        old = m.get("path") or ""
+        if m["type"] != "file" or "/" in old or not re.fullmatch(r"[0-9a-f]{8}_.+", old):
+            continue
+        src = FILES / old
+        if not src.exists():
+            continue
+        folder = FILES / old[:8]
+        try:
+            folder.mkdir(exist_ok=True)
+            src.replace(folder / old[9:])
+        except OSError:  # 文件正被别的程序打开时挪不动，下次启动再试
+            continue
+        m["path"] = f"{old[:8]}/{old[9:]}"
+        moved += 1
+    if moved:
+        backup = LOG.with_name(LOG.name + ".bak-files")
+        if not backup.exists():
+            shutil.copyfile(LOG, backup)
+        save_log()
+
+
+migrate_prefixed()
 
 
 def has_file(m):
@@ -155,9 +188,7 @@ def attach_file(uid, tmp):
         if not m or m["type"] != "file" or has_file(m):
             tmp.unlink(missing_ok=True)
             return False
-        stored = f"{secrets.token_hex(4)}_{m['name']}"
-        tmp.replace(FILES / stored)
-        m["path"] = stored
+        m["path"] = place(tmp, m["name"])
         REV = secrets.token_hex(4)  # 让页面刷新，"同步中"的文件卡片变成可打开
         save_log()
     return True
@@ -193,20 +224,40 @@ def stored_path(mid):
     return None
 
 
-def lan_ips():
-    ips = []
-    try:  # 默认路由所在网卡排第一
-        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-            s.connect(("10.255.255.255", 1))
-            ips.append(s.getsockname()[0])
-    except OSError:
-        pass
-    try:
-        for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
-            ips.append(info[4][0])
-    except OSError:
-        pass
-    return [ip for ip in dict.fromkeys(ips) if not ip.startswith("127.")]
+# 连过来的设备：按 IP 记最后一次请求的时间。页面每秒轮询、app 每 5 秒同步，
+# 超过 ONLINE_SECS 没动静就认为对方已断开（关了 app、断网或换去连别的主机）
+peers = {}
+peers_lock = threading.Lock()
+
+
+def seen(handler, synced=False):
+    ip = handler.client_address[0]
+    if ip == "127.0.0.1":  # 本机自己的窗口或命令行，不算"另一台"
+        return
+    now = time.time()
+    with peers_lock:
+        p = peers.setdefault(ip, {"ip": ip, "device": "", "hostname": "", "since": now, "last_seen": now,
+                                  "last_sync": None})
+        if now - p["last_seen"] > ONLINE_SECS:
+            p["since"] = now  # 断开后又连回来，重新计连接时长
+        p["last_seen"] = now
+        # 新版 app 和命令行工具会带上自己的设备编号和电脑名；浏览器访问只有 IP
+        for key, header in (("device", "X-Device"), ("hostname", "X-Hostname")):
+            if handler.headers.get(header):
+                p[key] = urllib.parse.unquote(handler.headers[header])[:64]
+        if synced:
+            p["last_sync"] = now
+
+
+def status():
+    now = time.time()
+    with peers_lock:
+        ps = [dict(p, online=now - p["last_seen"] <= ONLINE_SECS) for p in peers.values()]
+    with lock:
+        pending = sum(1 for m in messages if m["type"] == "file" and not has_file(m))
+    return {"device": DEVICE_ID, "hostname": HOSTNAME, "port": PORT, "now": now, "online_secs": ONLINE_SECS,
+            "messages": len(messages), "files_pending": pending,
+            "peers": sorted(ps, key=lambda p: -p["last_seen"])}
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -256,11 +307,14 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"id": DEVICE_ID, "hostname": HOSTNAME})
         if not self.authed():
             return self.send_json({"error": "pin"}, 401)
+        seen(self, synced=url.path == "/api/sync")
         if url.path == "/api/messages":
             since = int(urllib.parse.parse_qs(url.query).get("since", ["0"])[0])
             with lock:
                 new = [public(m) for m in messages[max(since, 0):]]
             return self.send_json({"messages": new, "rev": REV})
+        if url.path == "/api/status":  # 谁连着本机、各自最后活动和最后同步时间
+            return self.send_json(status())
         if url.path == "/api/sync":  # 另一台拉取全部记录（含 uid、文件是否在本机）
             return self.send_json({"device": DEVICE_ID, "messages": sync_view()})
         if url.path.startswith("/api/sync/file/"):
@@ -314,6 +368,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({"error": "pin"}, 403)
         if not self.authed():
             return self.send_json({"error": "pin"}, 401)
+        seen(self)
         if path == "/api/text":
             data = self.read_json()
             text = str(data.get("text", ""))
@@ -358,11 +413,10 @@ class Handler(BaseHTTPRequestHandler):
         if not 0 <= n <= MAX_UPLOAD:
             return self.send_json({"error": "size"}, 413)
         name = safe_name(urllib.parse.unquote(self.headers.get("X-Filename", "")))
-        stored = f"{secrets.token_hex(4)}_{name}"
-        tmp = FILES / f".part-{stored}"
+        tmp = FILES / f".part-{secrets.token_hex(4)}"
         try:
             self.read_body_to(tmp, n)
-            tmp.rename(FILES / stored)
+            stored = place(tmp, name)
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise

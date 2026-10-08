@@ -6,7 +6,6 @@ import ctypes
 import json
 import os
 import shutil
-import socket
 import subprocess
 import threading
 import time
@@ -20,30 +19,16 @@ from pathlib import Path
 import webview
 
 import lanchat
+from common import (SYNC_STATE, device_info, discover, favorites, hosting_at, identity_headers, load_conf, locate,
+                    normalize, opener, reachable, read_json, reverse_name, save_conf, save_pin, write_json)
 
-VERSION = "1.0.9"
-CONF = lanchat.DATA / "config.json"
+VERSION = "1.1.0"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
 RISKY = {".exe", ".com", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi",
          ".msp", ".scr", ".pif", ".lnk", ".url", ".hta", ".cpl", ".jar", ".reg", ".inf", ".appref-ms"}
 SETUP = (lanchat.RES / "setup.html").read_text(encoding="utf-8")
 LOCAL = f"127.0.0.1:{lanchat.PORT}"
-# 局域网地址不该走系统代理（桌面环境可能注入失效的代理）
-opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
-
-
-def load_conf():
-    try:
-        return json.loads(CONF.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def save_conf(**kw):
-    conf = load_conf()
-    conf.update(kw)
-    CONF.write_text(json.dumps(conf, ensure_ascii=False), encoding="utf-8")
 
 
 def copy_to_clipboard(text):
@@ -72,88 +57,6 @@ def copy_to_clipboard(text):
     finally:
         u32.CloseClipboard()
 
-def normalize(addr):
-    addr = addr.strip().removeprefix("http://").rstrip("/")
-    return addr if ":" in addr else f"{addr}:{lanchat.PORT}"
-
-
-def reachable(addr):
-    """对方确实是 LanChat 服务才算连得上。"""
-    try:
-        with opener.open(f"http://{addr}/", timeout=2) as r:
-            return b"lanchat_client" in r.read()
-    except OSError:
-        return False
-
-
-def device_info(addr):
-    """主机的设备编号和电脑名；v1.0.5 及更早的主机没有这个接口，返回 None。"""
-    try:
-        with opener.open(f"http://{addr}/api/device", timeout=2) as r:
-            info = json.loads(r.read())
-        return info if info.get("id") else None
-    except (OSError, ValueError):
-        return None
-
-
-def reverse_name(addr, timeout=2):
-    """旧版主机不报电脑名时，按 IP 向局域网反查（NetBIOS/LLMNR/DNS）；查不到返回空串。"""
-    ip = addr.rsplit(":", 1)[0]
-    result = []
-
-    def lookup():
-        try:
-            result.append(socket.gethostbyaddr(ip)[0])
-        except OSError:
-            pass
-
-    # gethostbyaddr 没有超时参数，放进线程里等，避免网络不通时卡住界面
-    t = threading.Thread(target=lookup, daemon=True)
-    t.start()
-    t.join(timeout)
-    name = result[0].split(".")[0] if result else ""
-    return "" if not name or name == ip.split(".")[0] else name.upper()
-
-
-def discover(timeout=1.5, names=True):
-    """广播搜索主机，返回 [{"addr", "id", "hostname"}]；旧版主机的应答里没有编号，电脑名靠反查（names=False 时跳过）。"""
-    own = set(lanchat.lan_ips())
-    # 255.255.255.255 只从默认网卡发出，再按 /24 给每块网卡补一个定向广播
-    targets = {"255.255.255.255"} | {ip.rsplit(".", 1)[0] + ".255" for ip in own}
-    found = {}
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-        s.settimeout(0.3)
-        for target in targets:
-            try:
-                s.sendto(b"LANCHAT?", (target, lanchat.DISCOVERY_PORT))
-            except OSError:
-                pass
-        end = time.time() + timeout
-        while time.time() < end:
-            try:
-                data, (ip, _) = s.recvfrom(256)
-            except OSError:  # 超时，或 Windows 把 ICMP 不可达报成 ConnectionResetError
-                continue
-            if data.startswith(b"LANCHAT ") and ip not in own:
-                parts = data.decode(errors="replace").split() + ["", ""]
-                addr = f"{ip}:{parts[1]}"
-                found.setdefault(addr, {"addr": addr, "id": parts[2], "hostname": parts[3]})
-    # 旧版主机并行反查电脑名
-    old = [h for h in found.values() if not h["hostname"]] if names else []
-    threads = [threading.Thread(target=lambda h=h: h.update(hostname=reverse_name(h["addr"])), daemon=True)
-               for h in old]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join(2.5)
-    return list(found.values())
-
-
-def favorites():
-    return load_conf().get("favorites", [])
-
-
 def remember(addr):
     """连上一台主机后记进常用设备：同一编号只更新 IP 和电脑名，自定义名字保持不变。"""
     info = device_info(addr) or {}
@@ -180,30 +83,13 @@ def remember(addr):
     return dev_id
 
 
-def hosting_at(fav):
-    """常用设备上次的地址上，现在是不是这台设备在当主机。"""
-    if fav["id"].startswith("addr:"):  # 旧版主机没有编号，只能看地址上有没有 LanChat
-        return reachable(fav["addr"])
-    info = device_info(fav["addr"])
-    return bool(info) and info["id"] == fav["id"]
-
-
-def locate(fav):
-    """找到常用设备当前的地址：先试上次的 IP，不对再广播按编号找。找不到返回 None。"""
-    if fav["id"].startswith("addr:"):
-        return fav["addr"] if reachable(fav["addr"]) else None
-    if hosting_at(fav):
-        return fav["addr"]
-    # IP 变了，或者原 IP 现在被另一台主机占着
-    return next((h["addr"] for h in discover() if h["id"] == fav["id"]), None)
-
-
 def sync_once(addr, pin):
     """与主机 addr 双向合并聊天记录和文件：本机缺的从主机拉，主机缺的推给主机。
 
     主机是 v1.0.7 及更早版本（没有 /api/sync）时抛 HTTPError 404，由调用方忽略。
+    返回本机还有几个文件没传完（条目已有、本体还缺）。
     """
-    hdr = {"Cookie": f"pin={pin}"}
+    hdr = {"Cookie": f"pin={pin}"} | identity_headers()
 
     def call(path, data=None, ctype="application/json"):
         req = urllib.request.Request(f"http://{addr}{path}", data=data, headers=hdr | {"Content-Type": ctype})
@@ -212,7 +98,7 @@ def sync_once(addr, pin):
     with call("/api/sync") as r:
         remote = json.loads(r.read())
     if remote.get("device") == lanchat.DEVICE_ID:  # 连的是自己
-        return
+        return 0
     rmsgs = {m["uid"]: m for m in remote["messages"] if m.get("uid")}
     lanchat.import_messages(list(rmsgs.values()))
     local = lanchat.sync_view()
@@ -239,26 +125,36 @@ def sync_once(addr, pin):
                 lanchat.attach_file(m["uid"], tmp)
             finally:
                 tmp.unlink(missing_ok=True)
+    return sum(1 for m in lanchat.sync_view() if m["type"] == "file" and not m["has"])
 
 
 def sync_loop():
-    """连接模式下每隔几秒同步一次，这样不管哪台当主机，两台都留有完整记录。"""
+    """连接模式下每隔几秒同步一次，这样不管哪台当主机，两台都留有完整记录。
+
+    每次的结果写进 sync_state.json，命令行 status 读它来显示"最近同步"。
+    """
     pins = {}
+    state = read_json(SYNC_STATE, {})
     while True:
         time.sleep(5)
         conf = load_conf()
         addr = conf.get("host")
         if conf.get("mode") != "join" or not addr:
             continue
+        state.update(host=addr, host_id=conf.get("host_id", ""), last_try=time.time())
         try:
             if addr not in pins:
                 pins[addr] = next((c["pin"].value for c in window.get_cookies() if "pin" in c), "")
-            sync_once(addr, pins[addr])
+            pending = sync_once(addr, pins[addr])
+            state.update(last_ok=state["last_try"], error="", pending_files=pending)
+            save_pin(conf.get("host_id") or addr, pins[addr])  # 命令行工具连这台时直接用
         except urllib.error.HTTPError as e:
             if e.code == 401:  # 访问码变了或还没登录，下次重新取 cookie
                 pins.pop(addr, None)
-        except Exception:  # 网络断开、主机关闭等，下次再试
-            pass
+            state["error"] = "主机版本过旧，不支持同步" if e.code == 404 else f"主机返回 {e.code}"
+        except Exception as e:  # 网络断开、主机关闭等，下次再试
+            state["error"] = f"连不上主机：{e}"
+        write_json(SYNC_STATE, state)
 
 
 class Api:
@@ -408,8 +304,8 @@ class Api:
     def _fetch(self, mid, name):
         """从当前连接的主机下载文件到 received\\，已下载过的直接复用。"""
         base = urllib.parse.urlsplit(window.get_current_url() or "").netloc or LOCAL
-        # 按主机分目录：换了主机后消息编号会重复
-        path = RECEIVED / base.replace(":", "_") / f"{mid}_{lanchat.safe_name(name)}"
+        # 按主机、消息编号分目录（换了主机后编号会重复），文件本身保留原名
+        path = RECEIVED / base.replace(":", "_") / str(mid) / lanchat.safe_name(name)
         if path.exists():
             return path
         pin = next((c["pin"].value for c in window.get_cookies() if "pin" in c), "")

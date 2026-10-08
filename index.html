@@ -15,6 +15,11 @@
            display: flex; justify-content: space-between; align-items: center; }
   header b { font-size: 16px; }
   #status, #info { font-size: 12px; color: #86909c; }
+  #status.down { color: #f54a45; }
+  .peer { display: inline-flex; align-items: center; gap: 5px; margin-right: 12px; font-size: 12px; color: #4e5969; }
+  .peer::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #34c759; }
+  .peer.off { color: #a9aeb8; }
+  .peer.off::before { background: #c9cdd4; }
   #info { margin-right: 12px; user-select: text; }
   #reset { margin-left: 10px; font-size: 12px; color: #3370ff; background: none; border: 0; cursor: pointer; }
   .brand { display: flex; align-items: center; gap: 10px; min-width: 0; }
@@ -120,7 +125,7 @@
 </style>
 </head>
 <body>
-<header><span class="brand"><b>LanChat</b><button id="dev" hidden><span id="devName"></span></button></span><span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
+<header><span class="brand"><b>LanChat</b><button id="dev" hidden><span id="devName"></span></button></span><span><span id="peers"></span><span id="info"></span><span id="status">连接中…</span><button id="reset" hidden>切换</button></span></header>
 <div id="list"><div class="empty" id="empty">还没有消息。输入文字按回车发送，或把文件拖进来。</div></div>
 <footer>
   <button id="pick">文件</button>
@@ -464,8 +469,10 @@ async function poll() {
     if (messages.length && stick) { toBottom(); forceScroll = false; }
     document.title = unread ? `(${unread}) 新消息 - LanChat` : 'LanChat';
     $('status').textContent = '已连接' + ($('status').dataset.v ? ` · app v${$('status').dataset.v}` : '');
+    $('status').classList.remove('down');
   } catch {
-    $('status').textContent = '连接断开，重试中…';
+    $('status').textContent = '与主机的连接已断开，重试中…';
+    $('status').classList.add('down');
   } finally {
     polling = false;
   }
@@ -556,8 +563,30 @@ $('loginForm').onsubmit = async e => {
 };
 
 fetch('/api/info').then(r => r.json()).then(i => {
-  if (i.addrs) $('info').textContent = `另一台连接：${i.addrs[0] || '（无网络）'} · 访问码 ${i.pin}`;
+  if (!i.addrs) return;  // 只有主机自己的窗口能拿到 addrs
+  $('info').textContent = `另一台连接：${i.addrs[0] || '（无网络）'} · 访问码 ${i.pin}`;
+  refreshPeers();
+  setInterval(refreshPeers, 3000);
 }).catch(() => {});
+
+// 主机窗口顶部显示连着本机的设备；对方关掉 app、断网或改去连别的主机，十几秒内就会显示"已断开"
+function ago(sec) {
+  return sec < 60 ? '刚刚' : sec < 3600 ? `${Math.floor(sec / 60)} 分钟前` : `${Math.floor(sec / 3600)} 小时前`;
+}
+async function refreshPeers() {
+  let st;
+  try { st = await (await fetch('/api/status', { cache: 'no-store' })).json(); } catch { return; }
+  const names = {};
+  for (const f of devState?.favorites || []) names[f.id] = f.name;
+  const show = st.peers.slice(0, 3).map(p => {
+    const name = names[p.device] || p.hostname || p.ip;
+    const span = el('span', 'peer ' + (p.online ? 'on' : 'off'), p.online ? name : `${name} 已断开 · ${ago(st.now - p.last_seen)}`);
+    span.title = [p.hostname, p.ip, p.last_sync ? `最近同步 ${ago(st.now - p.last_sync)}` : '未同步过（对方版本低于 1.0.8 或是浏览器）']
+      .filter(Boolean).join(' · ');
+    return span;
+  });
+  $('peers').replaceChildren(...(show.length ? show : [el('span', 'peer off', '暂无设备连接')]));
+}
 // 桌面 app 里才有 window.pywebview，浏览器打开时不显示"切换"
 function enableReset() {
   pywebview.api.version?.().then(v => { $('status').dataset.v = v; });
