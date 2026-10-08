@@ -2,6 +2,7 @@
 
 只依赖 Python 标准库。聊天记录存 data/messages.jsonl，文件存 data/files/。
 """
+import hashlib
 import json
 import mimetypes
 import os
@@ -23,6 +24,7 @@ BASE = Path(__file__).resolve().parent
 RES = Path(getattr(sys, "_MEIPASS", BASE))  # 打包成 exe 后，index.html 解压在 _MEIPASS 下
 # exe 所在目录可能随手放在桌面/下载，数据统一放 %APPDATA%\LanChat；脚本运行时仍放在脚本旁
 DATA = Path(os.environ["APPDATA"]) / "LanChat" if getattr(sys, "frozen", False) else BASE / "data"
+DATA = Path(os.environ.get("LANCHAT_DATA") or DATA)  # 测试时让两个实例用各自的数据目录
 FILES = DATA / "files"
 LOG = DATA / "messages.jsonl"
 PIN_FILE = DATA / "pin.txt"
@@ -32,7 +34,33 @@ IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 FILES.mkdir(parents=True, exist_ok=True)
 lock = threading.Lock()
-messages = []  # 消息 id 从 1 递增，messages[id - 1] 即该消息
+# 按时间排序，messages[id - 1] 即该消息；uid 是跨设备不变的消息编号，两台同步记录时靠它去重
+messages = []
+by_uid = {}
+# 同步插入了更早的消息、顺序变了时换一个值，页面据此整页重新加载
+REV = secrets.token_hex(4)
+SYNC_FIELDS = ("uid", "ts", "type", "text", "name", "size", "image", "client", "ip")
+
+
+def legacy_uid(m):
+    """v1.0.7 及更早的消息没有 uid，按内容算一个固定值。"""
+    key = f'{m.get("ts")}|{m.get("client")}|{m.get("type")}|{m.get("text") or m.get("name")}|{m.get("size")}'
+    return hashlib.sha1(key.encode()).hexdigest()[:16]
+
+
+def save_log():
+    """整份重写聊天记录（调用方持有 lock）。先写临时文件再替换，中途断电不会丢记录。"""
+    tmp = LOG.with_name(LOG.name + ".tmp")
+    with tmp.open("w", encoding="utf-8") as f:
+        for m in messages:
+            f.write(json.dumps(m, ensure_ascii=False) + "\n")
+    tmp.replace(LOG)
+
+
+def reindex():
+    for i, m in enumerate(messages, 1):
+        m["id"] = i
+
 
 if LOG.exists():
     for line in LOG.read_text(encoding="utf-8").splitlines():
@@ -40,8 +68,17 @@ if LOG.exists():
             messages.append(json.loads(line))
         except json.JSONDecodeError:
             pass
-    for i, m in enumerate(messages, 1):
-        m["id"] = i
+    messages.sort(key=lambda m: m.get("ts", 0))
+    legacy = [m for m in messages if not m.get("uid")]
+    for m in legacy:
+        m["uid"] = legacy_uid(m)
+    reindex()
+    by_uid = {m["uid"]: m for m in messages}
+    if legacy:  # 一次性迁移：补上 uid 后重写，原记录留一份备份
+        backup = LOG.with_name(LOG.name + ".bak")
+        if not backup.exists():
+            shutil.copyfile(LOG, backup)
+        save_log()
 
 if PIN_FILE.exists():
     PIN = PIN_FILE.read_text(encoding="utf-8").strip()
@@ -63,14 +100,78 @@ def add(msg):
     with lock:
         msg["id"] = len(messages) + 1
         msg["ts"] = time.time()
+        msg["uid"] = secrets.token_hex(8)
         messages.append(msg)
+        by_uid[msg["uid"]] = msg
         with LOG.open("a", encoding="utf-8") as f:
             f.write(json.dumps(msg, ensure_ascii=False) + "\n")
     return msg
 
 
+def has_file(m):
+    return m["type"] == "file" and bool(m.get("path")) and (FILES / m["path"]).exists()
+
+
 def public(msg):
-    return {k: v for k, v in msg.items() if k != "path"}
+    out = {k: v for k, v in msg.items() if k != "path"}
+    if msg["type"] == "file":
+        out["has"] = has_file(msg)  # 同步过来的文件，本体可能还在路上
+    return out
+
+
+def import_messages(items):
+    """并入另一台的消息：按 uid 去重、按时间插入。文件消息先只建条目，本体由 attach_file 补上。"""
+    global REV
+    added, reordered = 0, False
+    with lock:
+        for it in items:
+            uid = str(it.get("uid", ""))[:32]
+            if not uid or uid in by_uid or it.get("type") not in ("text", "file"):
+                continue
+            m = {k: it[k] for k in SYNC_FIELDS if k in it}
+            m["uid"], m["ts"] = uid, float(m.get("ts") or time.time())
+            if m["type"] == "file":
+                m["name"], m["path"] = safe_name(str(m.get("name", ""))), None
+            i = len(messages)
+            while i and messages[i - 1]["ts"] > m["ts"]:
+                i -= 1
+            reordered |= i < len(messages)
+            messages.insert(i, m)
+            by_uid[uid] = m
+            added += 1
+        if added:
+            if reordered:
+                REV = secrets.token_hex(4)
+            reindex()
+            save_log()
+    return added
+
+
+def attach_file(uid, tmp):
+    """把同步来的文件本体（已写好的临时文件 tmp）挂到对应消息上；消息不存在或已有文件则丢弃。"""
+    global REV
+    with lock:
+        m = by_uid.get(uid)
+        if not m or m["type"] != "file" or has_file(m):
+            tmp.unlink(missing_ok=True)
+            return False
+        stored = f"{secrets.token_hex(4)}_{m['name']}"
+        tmp.replace(FILES / stored)
+        m["path"] = stored
+        REV = secrets.token_hex(4)  # 让页面刷新，"同步中"的文件卡片变成可打开
+        save_log()
+    return True
+
+
+def path_by_uid(uid):
+    with lock:
+        m = by_uid.get(uid)
+        return FILES / m["path"] if m and has_file(m) else None
+
+
+def sync_view():
+    with lock:
+        return [public(m) for m in messages]
 
 
 def safe_name(name):
@@ -87,7 +188,7 @@ def stored_path(mid):
     """本机主机模式下，消息 mid 对应文件在磁盘上的位置；不是文件消息返回 None。"""
     with lock:
         m = messages[mid - 1] if 0 < mid <= len(messages) else None
-    if m and m["type"] == "file" and (FILES / m["path"]).exists():
+    if m and has_file(m):
         return FILES / m["path"]
     return None
 
@@ -159,7 +260,20 @@ class Handler(BaseHTTPRequestHandler):
             since = int(urllib.parse.parse_qs(url.query).get("since", ["0"])[0])
             with lock:
                 new = [public(m) for m in messages[max(since, 0):]]
-            return self.send_json({"messages": new})
+            return self.send_json({"messages": new, "rev": REV})
+        if url.path == "/api/sync":  # 另一台拉取全部记录（含 uid、文件是否在本机）
+            return self.send_json({"device": DEVICE_ID, "messages": sync_view()})
+        if url.path.startswith("/api/sync/file/"):
+            path = path_by_uid(url.path.rsplit("/", 1)[1])
+            if not path:
+                return self.send_error(404)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(path.stat().st_size))
+            self.end_headers()
+            with path.open("rb") as f:
+                shutil.copyfileobj(f, self.wfile, 1024**2)
+            return
         if url.path == "/api/info":  # 主机窗口顶部显示本机地址和访问码，供另一台连接
             if not self.local():
                 return self.send_json({})
@@ -175,7 +289,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_error(404)
         with lock:
             m = messages[mid - 1] if 0 < mid <= len(messages) else None
-        if not m or m["type"] != "file" or not (FILES / m["path"]).exists():
+        if not m or not has_file(m):
             return self.send_error(404)
         path = FILES / m["path"]
         inline = "inline" in url.query
@@ -210,7 +324,34 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(public(msg))
         if path == "/api/file":
             return self.recv_file()
+        if path == "/api/sync":  # 另一台推送它有、本机没有的记录
+            items = self.read_json().get("messages", [])
+            return self.send_json({"added": import_messages(items if isinstance(items, list) else [])})
+        if path.startswith("/api/sync/file/"):
+            return self.recv_sync_file(path.rsplit("/", 1)[1])
         self.send_error(404)
+
+    def recv_sync_file(self, uid):
+        n = int(self.headers.get("Content-Length", -1))
+        if not 0 <= n <= MAX_UPLOAD:
+            return self.send_json({"error": "size"}, 413)
+        tmp = FILES / f".part-sync-{secrets.token_hex(4)}"
+        try:
+            self.read_body_to(tmp, n)
+        except BaseException:
+            tmp.unlink(missing_ok=True)
+            raise
+        return self.send_json({"ok": attach_file(uid, tmp)})
+
+    def read_body_to(self, tmp, n):
+        with tmp.open("wb") as f:
+            left = n
+            while left:
+                chunk = self.rfile.read(min(left, 1024**2))
+                if not chunk:
+                    raise ConnectionError("上传中断")
+                f.write(chunk)
+                left -= len(chunk)
 
     def recv_file(self):
         n = int(self.headers.get("Content-Length", -1))
@@ -220,14 +361,7 @@ class Handler(BaseHTTPRequestHandler):
         stored = f"{secrets.token_hex(4)}_{name}"
         tmp = FILES / f".part-{stored}"
         try:
-            with tmp.open("wb") as f:
-                left = n
-                while left:
-                    chunk = self.rfile.read(min(left, 1024**2))
-                    if not chunk:
-                        raise ConnectionError("上传中断")
-                    f.write(chunk)
-                    left -= len(chunk)
+            self.read_body_to(tmp, n)
             tmp.rename(FILES / stored)
         except BaseException:
             tmp.unlink(missing_ok=True)

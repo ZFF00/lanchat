@@ -10,6 +10,7 @@ import socket
 import subprocess
 import threading
 import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -20,7 +21,7 @@ import webview
 
 import lanchat
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -197,6 +198,69 @@ def locate(fav):
     return next((h["addr"] for h in discover() if h["id"] == fav["id"]), None)
 
 
+def sync_once(addr, pin):
+    """与主机 addr 双向合并聊天记录和文件：本机缺的从主机拉，主机缺的推给主机。
+
+    主机是 v1.0.7 及更早版本（没有 /api/sync）时抛 HTTPError 404，由调用方忽略。
+    """
+    hdr = {"Cookie": f"pin={pin}"}
+
+    def call(path, data=None, ctype="application/json"):
+        req = urllib.request.Request(f"http://{addr}{path}", data=data, headers=hdr | {"Content-Type": ctype})
+        return opener.open(req, timeout=30)
+
+    with call("/api/sync") as r:
+        remote = json.loads(r.read())
+    if remote.get("device") == lanchat.DEVICE_ID:  # 连的是自己
+        return
+    rmsgs = {m["uid"]: m for m in remote["messages"] if m.get("uid")}
+    lanchat.import_messages(list(rmsgs.values()))
+    local = lanchat.sync_view()
+    missing = [m for m in local if m["uid"] not in rmsgs]
+    if missing:
+        call("/api/sync", json.dumps({"messages": missing}).encode()).close()
+    for m in local:
+        if m["type"] != "file":
+            continue
+        there = rmsgs.get(m["uid"], {}).get("has", False)
+        if m["has"] and not there:  # 推文件本体
+            path = lanchat.path_by_uid(m["uid"])
+            if path:
+                with path.open("rb") as f:
+                    req = urllib.request.Request(f"http://{addr}/api/sync/file/{m['uid']}", data=f, method="POST",
+                                                 headers=hdr | {"Content-Length": str(path.stat().st_size),
+                                                                "Content-Type": "application/octet-stream"})
+                    opener.open(req, timeout=600).close()
+        elif there and not m["has"]:  # 拉文件本体
+            tmp = lanchat.FILES / f".part-sync-{m['uid']}"
+            try:
+                with call(f"/api/sync/file/{m['uid']}") as r, tmp.open("wb") as f:
+                    shutil.copyfileobj(r, f, 1024**2)
+                lanchat.attach_file(m["uid"], tmp)
+            finally:
+                tmp.unlink(missing_ok=True)
+
+
+def sync_loop():
+    """连接模式下每隔几秒同步一次，这样不管哪台当主机，两台都留有完整记录。"""
+    pins = {}
+    while True:
+        time.sleep(5)
+        conf = load_conf()
+        addr = conf.get("host")
+        if conf.get("mode") != "join" or not addr:
+            continue
+        try:
+            if addr not in pins:
+                pins[addr] = next((c["pin"].value for c in window.get_cookies() if "pin" in c), "")
+            sync_once(addr, pins[addr])
+        except urllib.error.HTTPError as e:
+            if e.code == 401:  # 访问码变了或还没登录，下次重新取 cookie
+                pins.pop(addr, None)
+        except Exception:  # 网络断开、主机关闭等，下次再试
+            pass
+
+
 class Api:
     """暴露给页面的 pywebview.api；下划线开头的成员不会暴露。"""
 
@@ -286,16 +350,27 @@ class Api:
         """兼容 v1.0.2 页面：等同 file_action(..., "open")，返回提示文本。"""
         return self.file_action(mid, name, "open")["error"]
 
-    def file_action(self, mid, name, action):
+    def client_ids(self, cid):
+        """本机用过的所有页面客户端编号。
+
+        页面按网址分别存编号，本机当主机（127.0.0.1）和连别人时编号不同；合并记录后靠这份清单认出"我"发的。
+        """
+        ids = load_conf().get("clients", [])
+        if cid and cid not in ids:
+            ids.append(cid)
+            save_conf(clients=ids)
+        return ids
+
+    def file_action(self, mid, name, action, uid=None):
         """对第 mid 条消息里的文件执行操作，返回 {"error": 提示, "info": 成功提示}。
 
         action: open 打开 / folder 打开所在目录 / saveas 另存为 / path 复制路径 / dir 复制目录路径
-        连接端先把文件下载到本机 received\\，之后的路径、目录都指向这份本机副本。
+        优先用本机同步来的那份；没有时连接端先把文件下载到本机 received\\。
         """
         if action == "open" and Path(name).suffix.lower() in RISKY:
             return {"error": "这是可执行文件，为安全起见不直接打开，请用“所在目录”找到它，确认安全后再运行", "info": ""}
         try:
-            path = self._local_path(int(mid), name)
+            path = (uid and lanchat.path_by_uid(uid)) or self._local_path(int(mid), name)
             if action == "open":
                 os.startfile(path)
             elif action == "folder":
@@ -366,5 +441,6 @@ elif conf.get("mode") == "join":
 window = webview.create_window("LanChat", url=url, html=None if url else SETUP, js_api=api,
                                width=900, height=680, min_size=(480, 420))
 webview.settings["ALLOW_DOWNLOADS"] = True
+threading.Thread(target=sync_loop, daemon=True).start()
 # 打包后 pywebview 会取 exe 自带的图标；脚本运行时 exe 是 python.exe，所以显式指定
 webview.start(private_mode=False, storage_path=str(lanchat.DATA / "webview"), icon=str(lanchat.RES / "icon.ico"))

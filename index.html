@@ -55,6 +55,10 @@
   .card img { margin: 0; border-radius: 0; max-height: 260px; cursor: pointer; }
   .file { display: flex; gap: 12px; align-items: center; padding: 12px 14px; cursor: pointer; transition: background .15s; }
   .file:hover { background: rgba(51,112,255,.06); }
+  .pending .file { cursor: default; }
+  .pending .file:hover { background: none; }
+  .pending .file:hover .name { color: inherit; }
+  .pending .badge { opacity: .45; }
   .file:hover .name { color: #3370ff; }
   .file .meta2 { min-width: 0; flex: 1; }
   .file .name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
@@ -144,7 +148,9 @@ if (!client) {
   client = Math.random().toString(36).slice(2) + Date.now().toString(36);
   localStorage.setItem('lanchat_client', client);
 }
-let lastId = 0, unread = 0, polling = false, forceScroll = true;
+let lastId = 0, unread = 0, polling = false, forceScroll = true, rev = null, needReload = false;
+// 本机发的消息可能带着本机在其他网址下的客户端编号（当主机时与连别人时不同），由 app 汇总
+let myClients = new Set([client]);
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -222,7 +228,7 @@ function copyText(text) {
 }
 
 function render(m) {
-  const mine = m.client === client;
+  const mine = myClients.has(m.client);
   const row = el('div', 'row' + (mine ? ' me' : ''));
   row.appendChild(el('div', 'meta', `${mine ? '我' : '对方 ' + m.ip} · ${fmtTime(m.ts)}`));
   const bubble = el('div', 'bubble');
@@ -238,6 +244,15 @@ function render(m) {
   bubble.classList.add('card');
   const f = el('div', 'file'), info = el('div', 'meta2');
   const size = el('div', 'size', fmtSize(m.size));
+  if (m.has === false) {  // 记录已同步过来，文件本体还在从另一台传
+    bubble.classList.add('pending');
+    size.textContent = `${fmtSize(m.size)} · 文件同步中…`;
+    f.append(badge(m.name), info);
+    info.append(el('div', 'name', m.name), size);
+    f.title = '文件正在从另一台电脑同步过来，完成后即可打开';
+    bubble.appendChild(f);
+    return row;
+  }
   if (m.image) {
     const img = el('img');
     const stick = nearBottom();
@@ -398,7 +413,7 @@ async function fileAction(m, action, status) {
   status.textContent = BUSY_TEXT[action];
   try {
     const r = pywebview.api.file_action
-      ? await pywebview.api.file_action(m.id, m.name, action)
+      ? await pywebview.api.file_action(m.id, m.name, action, m.uid)
       : { error: await pywebview.api.open_file(m.id, m.name) };  // v1.0.2 app 只有 open_file
     if (r.error) toast(r.error, true);
     else if (r.info) toast(r.info);
@@ -410,19 +425,41 @@ async function fileAction(m, action, status) {
   }
 }
 
+let reloading = false;
+// 清掉已渲染的消息（保留正在上传的行），整页重载时保持阅读位置
+function clearList() {
+  const keep = nearBottom() ? null : list.scrollTop;
+  reloading = true;
+  list.querySelectorAll('.row:not(.uploading)').forEach(e => e.remove());
+  requestAnimationFrame(() => {
+    reloading = false;
+    if (keep === null) toBottom(); else list.scrollTop = keep;
+  });
+}
+
 async function poll() {
   if (polling) return;
   polling = true;
   try {
-    const r = await fetch(`/api/messages?since=${lastId}`, { cache: 'no-store' });
+    let r = await fetch(`/api/messages?since=${lastId}`, { cache: 'no-store' });
     if (r.status === 401) return showLogin();
-    const { messages } = await r.json();
+    let data = await r.json();
+    if ((data.rev && rev && data.rev !== rev) || needReload) {
+      // 同步插入了更早的消息或补齐了文件，编号已变：整页重新加载
+      lastId = 0;
+      needReload = false;
+      r = await fetch('/api/messages?since=0', { cache: 'no-store' });
+      data = await r.json();
+      clearList();
+    }
+    rev = data.rev || rev;
+    const { messages } = data;
     const stick = forceScroll || nearBottom();
     for (const m of messages) {
       $('empty')?.remove();
-      list.appendChild(render(m));
+      list.insertBefore(render(m), list.querySelector('.uploading'));
       lastId = m.id;
-      if (m.client !== client && document.hidden) unread++;
+      if (!myClients.has(m.client) && document.hidden && !reloading) unread++;
     }
     if (messages.length && stick) { toBottom(); forceScroll = false; }
     document.title = unread ? `(${unread}) 新消息 - LanChat` : 'LanChat';
@@ -457,7 +494,7 @@ async function sendText() {
 function upload(file) {
   $('empty')?.remove();
   const name = file.name || 'paste.png';
-  const row = el('div', 'row me'), bubble = el('div', 'bubble', `上传 ${name} … 0%`);
+  const row = el('div', 'row me uploading'), bubble = el('div', 'bubble', `上传 ${name} … 0%`);
   row.appendChild(bubble); list.appendChild(row); toBottom();
   const xhr = new XMLHttpRequest();  // 用 XHR 而非 fetch，是为了拿到上传进度
   xhr.open('POST', '/api/file');
@@ -527,6 +564,13 @@ function enableReset() {
   if (pywebview.api.file_action) document.body.classList.add('app');
   $('reset').hidden = false;
   $('reset').onclick = () => pywebview.api.reset();
+  if (pywebview.api.client_ids) {  // v1.0.8 起：认出本机在其他网址下发的消息
+    pywebview.api.client_ids(client).then(ids => {
+      const before = myClients.size;
+      myClients = new Set([client, ...ids]);
+      if (myClients.size !== before) { needReload = true; poll(); }
+    });
+  }
   if (pywebview.api.devices) {  // v1.0.6 起的 app 才有设备切换器
     $('dev').hidden = false;
     $('dev').appendChild(icon('chevron'));
