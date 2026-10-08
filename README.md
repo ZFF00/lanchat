@@ -12,7 +12,9 @@
 
 ## 下载使用（Windows）
 
-到 [Releases](../../releases) 下载 `LanChat.exe`，两台电脑都放一份，双击运行：
+到 [Releases](../../releases) 下载 `LanChat.exe`，两台电脑都放一份。exe 不需要安装，放哪里都能双击运行；想像普通软件一样从桌面和开始菜单打开，见下面的[安装与快捷方式](#安装与快捷方式)。
+
+双击运行后：
 
 1. **一台选"作为主机启动"**：聊天记录和文件存在这台上，使用时需保持开着。窗口顶部会显示地址和访问码，例如 `另一台连接：192.168.3.136:8765 · 访问码 0650`。
 2. **另一台选"连接另一台"**：点"自动搜索"，或手动输入主机显示的地址，首次连接输入一次访问码。
@@ -24,6 +26,29 @@
 > 两台都选"作为主机"会变成两个互不相通的聊天室——必须一台主机、一台连接。
 
 **两台都保存完整记录**：连接端会在后台每隔几秒与主机双向同步聊天记录和文件，所以不管哪台当主机，两台都留有一份完整的记录。换另一台当主机后，以前的消息和文件照样都在。同步需要两台都是 v1.0.8 及以上。
+
+### 安装与快捷方式
+
+推荐把 exe 放到 Windows 给单用户程序的标准位置 `%LOCALAPPDATA%\Programs\LanChat`，再建桌面和开始菜单快捷方式。下载 `LanChat.exe` 到"下载"文件夹后，在 PowerShell 里执行（不需要管理员权限）：
+
+```powershell
+$dir = Join-Path $env:LOCALAPPDATA 'Programs\LanChat'
+New-Item -ItemType Directory -Force -Path $dir | Out-Null
+Get-Process LanChat -ErrorAction SilentlyContinue | Stop-Process   # 升级时先关掉正在运行的旧版
+Copy-Item "$env:USERPROFILE\Downloads\LanChat.exe" $dir -Force
+$exe = Join-Path $dir 'LanChat.exe'
+$sh = New-Object -ComObject WScript.Shell
+foreach ($folder in [Environment]::GetFolderPath('Desktop'), [Environment]::GetFolderPath('Programs')) {
+    $lnk = $sh.CreateShortcut((Join-Path $folder 'LanChat.lnk'))
+    $lnk.TargetPath = $exe; $lnk.WorkingDirectory = $dir; $lnk.IconLocation = "$exe,0"; $lnk.Save()
+}
+Start-Process $exe
+```
+
+- 升级新版时再执行一次即可：覆盖 exe，快捷方式不变。
+- 聊天记录、文件、常用设备都在 `%APPDATA%\LanChat`，与 exe 放在哪里无关，换位置、升级都不会丢。
+- 卸载：删除 `%LOCALAPPDATA%\Programs\LanChat` 和两个快捷方式；要连数据一起删，再删 `%APPDATA%\LanChat`。
+- 命令行工具 `lanchat-cli.exe` 也可以放进同一个目录，并把该目录加进用户 PATH，之后在任意位置直接运行 `lanchat-cli`。
 
 ### 主机需放行防火墙
 
@@ -39,6 +64,8 @@ New-NetFirewallRule -DisplayName "LanChat discovery" -Direction Inbound -Protoco
 - **自动搜索找不到**：搜索靠 UDP 广播，跨网段（如 `192.168.3.x` 与 `192.168.8.x`）收不到，手动输入地址即可。
 - **手动输入也连不上**：检查主机防火墙；公司/公共 Wi-Fi 可能开了 AP 隔离，禁止设备互访。
 - **exe 被 Windows 拦截**：未签名程序可能被 SmartScreen / 智能应用控制拦下，稍等片刻再运行，或选择"仍要运行"。
+- **任务栏图标是空白文件**：exe 放在了网盘同步文件夹（WPS 云盘、OneDrive 等）里，尤其是已经不再同步的旧同步文件夹，Windows 取不到图标。按上面的方法装到 `%LOCALAPPDATA%\Programs\LanChat` 即可。
+- **任务栏图标还是旧的**：Windows 缓存了旧图标，重启"Windows 资源管理器"（任务管理器里右键 → 重新启动）或注销一次即可。
 - **数据存在哪**：`%APPDATA%\LanChat`（聊天记录 `messages.jsonl`、收到的文件 `files\`、访问码 `pin.txt`）。
 
 ### 连接状态
