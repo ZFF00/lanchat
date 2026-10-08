@@ -21,7 +21,7 @@ import webview
 
 import lanchat
 
-VERSION = "1.0.8"
+VERSION = "1.0.9"
 CONF = lanchat.DATA / "config.json"
 RECEIVED = lanchat.DATA / "received"  # 连接端打开文件时下载到这里
 # 双击即会执行的类型不直接打开，防止对方发来的程序被一点就运行
@@ -278,6 +278,12 @@ class Api:
         save_conf(mode="host")
         return ""
 
+    def _stop_host(self):
+        """离开主机模式时关掉服务，否则另一台仍能连上、搜到本机，以为它还在当主机。"""
+        if self._server is not None:
+            lanchat.stop(self._server)
+            self._server = None
+
     def version(self):
         return VERSION
 
@@ -300,6 +306,9 @@ class Api:
             return "请输入地址"
         if not reachable(addr):
             return f"连不上 {addr}：确认对方已作为主机启动，且防火墙已放行"
+        if (device_info(addr) or {}).get("id") == lanchat.DEVICE_ID:
+            return f"{addr} 是这台电脑自己，请输入另一台的地址"
+        self._stop_host()
         save_conf(mode="join", host=addr, host_id=remember(addr))
         window.load_url(f"http://{addr}/")
 
@@ -416,6 +425,7 @@ class Api:
         return path
 
     def reset(self):
+        self._stop_host()
         save_conf(mode="")
         self._error = ""
         window.load_html(SETUP)

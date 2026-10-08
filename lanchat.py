@@ -381,23 +381,45 @@ class Server(ThreadingHTTPServer):
         super().handle_error(request, client_address)
 
 
-def answer_discovery():
-    """回应局域网广播 "LANCHAT?"，让另一台 app 自动找到本机。"""
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+def answer_discovery(s=None):
+    """回应局域网广播 "LANCHAT?"，让另一台 app 自动找到本机。socket 被 stop() 关掉后退出。"""
+    if s is None:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.bind(("", DISCOVERY_PORT))
+    with s:
         while True:
-            data, addr = s.recvfrom(64)
+            try:
+                data, addr = s.recvfrom(64)
+            except ConnectionResetError:  # Windows 把对方不可达报成这个，忽略即可
+                continue
+            except OSError:  # socket 已关闭
+                return
             if data == b"LANCHAT?":
                 # 旧版连接端只取第 2 段端口，且用 64 字节缓冲接收（Windows 上超长会整条丢弃），电脑名截短
                 s.sendto(f"LANCHAT {PORT} {DEVICE_ID} {HOSTNAME}".encode()[:64], addr)
 
 
 def start():
-    """后台线程启动服务和广播应答；端口被占用时抛 OSError。"""
+    """后台线程启动服务和广播应答，返回交给 stop() 的句柄；端口被占用时抛 OSError。"""
     server = Server(("0.0.0.0", PORT), Handler)
+    disc = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        disc.bind(("", DISCOVERY_PORT))
+    except OSError:
+        server.server_close()
+        disc.close()
+        raise
     threading.Thread(target=server.serve_forever, daemon=True).start()
-    threading.Thread(target=answer_discovery, daemon=True).start()
-    return server
+    threading.Thread(target=answer_discovery, args=(disc,), daemon=True).start()
+    return server, disc
+
+
+def stop(handle):
+    """关掉 start() 开的服务和广播应答，释放端口；之后别人再也连不到、搜不到本机。"""
+    server, disc = handle
+    server.shutdown()
+    server.server_close()
+    disc.close()
 
 
 if __name__ == "__main__":
